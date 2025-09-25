@@ -88,14 +88,11 @@ jobs:
         raise Exception("make getdeps failed")
     - name: Build AppImage
       run: make LOVE_BRANCH=${{ needs.version.outputs.commit_hash }}
-    - name: Rename AppImage
-      run: |
-        mv love-${{ needs.version.outputs.commit_hash }}.AppImage love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-${{ runner.arch }}.AppImage
     - name: Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-${{ runner.arch }}
-        path: love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-${{ runner.arch }}.AppImage
+        name: love-linux-${{ runner.arch }}.AppImage
+        path: love-${{ needs.version.outputs.commit_hash }}.AppImage
 
   Windows:
     runs-on: windows-2025
@@ -136,10 +133,28 @@ jobs:
         echo nofiles=ignore>> "%GITHUB_OUTPUT%"
         echo moredef=-DLOVE_EXTRA_DLLS=%CD%\angle\libEGL.dll;%CD%\angle\libGLESv2.dll>> "%GITHUB_OUTPUT%"
         exit /b 0
+    - name: Install NSIS
+      run: winget install nsis --disable-interactivity --accept-source-agreements --accept-package-agreements
+    - name: Download pdbstr
+      run: curl -Lfo pdbstr.nupkg https://www.nuget.org/api/v2/package/Microsoft.Debugging.Tools.PdbStr/20230731.1609.0
+    - name: Download srctool
+      run: curl -Lfo srctool.nupkg https://www.nuget.org/api/v2/package/Microsoft.Debugging.Tools.SrcTool/20230731.1609.0
+    - name: Extract Tools and Add to PATH
+      run: |
+        mkdir debugtools
+        cd debugtools
+        if errorlevel 1 exit /b 1
+        7z e ..\srctool.nupkg content/amd64/srctool.exe
+        if errorlevel 1 exit /b 1
+        7z e ..\pdbstr.nupkg content/amd64/pdbstr.exe
+        if errorlevel 1 exit /b 1
+        echo %CD%>>%GITHUB_PATH%
     - name: Setup Python 3.10
       uses: actions/setup-python@v5
       with:
         python-version: "3.10"
+    - name: Download source_index.py
+      run: curl -Lfo source_index.py https://gist.github.com/MikuAuahDark/d9c099f5714e09a765496471c2827a55/raw/df34956052035f3473c5f01861dfb53930d06843/source_index.py
     - name: Clone Megasource
       uses: actions/checkout@v4
       with:
@@ -191,41 +206,34 @@ jobs:
       run: |
         copy /Y build\libs\LuaJIT\src\lua51.pdb pdb\Release\lua51.pdb
         exit /b 0
-    - name: Rename build files
-      shell: powershell
+    - name: Add srcsrv to PATH
       run: |
-        # Find and rename zip/exe files
-        $buildFiles = @()
-        $buildFiles += Get-ChildItem -Path "build" -Name "*.zip" -ErrorAction SilentlyContinue
-        $buildFiles += Get-ChildItem -Path "build" -Name "*.exe" -ErrorAction SilentlyContinue
-        
-        if ($buildFiles.Count -gt 0) {
-          New-Item -ItemType Directory -Path "renamed-build" -Force | Out-Null
-          foreach ($file in $buildFiles) {
-            $extension = [System.IO.Path]::GetExtension($file)
-            $newName = "love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-${{ steps.vars.outputs.arch }}$extension"
-            Copy-Item -Path "build/$file" -Destination "renamed-build/$newName"
-            Write-Output "Renamed $file to $newName"
-          }
-        } else {
-          Write-Output "No build files found"
-        }
+        echo C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\srcsrv>>%GITHUB_PATH%
+    - name: Embed Source Index into PDBs
+      run: |
+        python source_index.py ^
+        --source %CD%\megasource\libs\love https://raw.githubusercontent.com/love2d/love/${{ needs.version.outputs.commit_hash }} ^
+        --source %CD%\megasource https://raw.githubusercontent.com/love2d/megasource/${{ steps.megasource.outputs.commit }} ^
+        --source %CD%\build\libs\LuaJIT https://raw.githubusercontent.com/love2d/megasource/${{ steps.megasource.outputs.commit }}/libs/LuaJIT ^
+        pdb\Release\*.pdb
     - name: Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-${{ steps.vars.outputs.arch }}
-        path: renamed-build/*
+        name: love-windows-${{ steps.vars.outputs.arch }}
+        path: |
+          build/*.zip
+          build/*.exe
         if-no-files-found: ${{ steps.vars.outputs.nofiles }}
     - name: Artifact JIT Modules
       if: steps.vars.outputs.jitmodules == '1'
       uses: actions/upload-artifact@v4
       with:
-        name: love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-jitmodules
+        name: love-windows-jitmodules
         path: build/libs/LuaJIT/src/jit/*.lua
     - name: Artifact PDB
       uses: actions/upload-artifact@v4
       with:
-        name: love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-${{ steps.vars.outputs.arch }}-dbg
+        name: love-windows-${{ steps.vars.outputs.arch }}-dbg
         path: pdb/Release/*.pdb
 
   macOS:
@@ -260,12 +268,12 @@ jobs:
     - name: Zip Archive
       working-directory: love2d
       run: |
-        ditto -c -k --sequesterRsrc --keepParent love-macos/love.app love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-macos.zip
+        ditto -c -k --sequesterRsrc --keepParent love-macos/love.app love-macos.zip
     - name: Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-macos
-        path: love2d/love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-macos.zip
+        name: love-macos
+        path: love2d/love-macos.zip
 
   release:
     name: Create Release
@@ -282,11 +290,36 @@ jobs:
         # Create release directory
         mkdir -p release-files
         
-        # Copy files from each artifact directory
-        find . -name "love-*" -type d | while read dir; do
+        # Copy files from each artifact directory, using original artifact names
+        for dir in love-linux-*.AppImage love-windows-* love-macos; do
           if [ -d "$dir" ]; then
             echo "Processing directory: $dir"
-            find "$dir" -type f \( -name "*.AppImage" -o -name "*.zip" -o -name "*.exe" \) -exec cp {} release-files/ \;
+            find "$dir" -type f \( -name "*.AppImage" -o -name "*.zip" -o -name "*.exe" \) | while read file; do
+              # Rename files to include version info
+              basename_file=$(basename "$file")
+              case "$basename_file" in
+                *.AppImage)
+                  if [[ "$dir" == *"X64"* ]]; then
+                    cp "$file" "release-files/love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-x64.AppImage"
+                  elif [[ "$dir" == *"ARM64"* ]]; then
+                    cp "$file" "release-files/love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-arm64.AppImage"
+                  fi
+                  ;;
+                love-macos.zip)
+                  cp "$file" "release-files/love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-macos.zip"
+                  ;;
+                *.zip|*.exe)
+                  # Windows files - detect architecture from directory name
+                  if [[ "$dir" == *"x64"* ]]; then
+                    arch="x64"
+                  elif [[ "$dir" == *"arm64"* ]]; then
+                    arch="arm64"  
+                  fi
+                  ext="${basename_file##*.}"
+                  cp "$file" "release-files/love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-${arch}.${ext}"
+                  ;;
+              esac
+            done
           fi
         done
         
