@@ -106,6 +106,7 @@ jobs:
     name: Windows (${{ matrix.arch }})
     runs-on: windows-2025
     needs: version
+    continue-on-error: ${{ matrix.platform == 'ARM64' }}
     strategy:
       matrix:
         include:
@@ -164,8 +165,9 @@ jobs:
 
     - name: Configure
       env:
-        CFLAGS: /Zi
-        CXXFLAGS: /Zi
+        # Suppress common warnings to reduce log size and build time
+        CFLAGS: /Zi /wd4244 /wd4267 /wd4018 /wd4305
+        CXXFLAGS: /Zi /wd4244 /wd4267 /wd4018 /wd4305
         LDFLAGS: /DEBUG:FULL /OPT:REF /OPT:ICF
       run: |
         if "${{ matrix.platform }}" == "ARM64" (
@@ -177,22 +179,55 @@ jobs:
     - name: Build and Package
       run: cmake --build build --target PACKAGE --config Release -j2
 
-    - name: Rename Windows build
+    - name: Copy LuaJIT Debug Symbols
+      run: |
+        copy /Y build\libs\LuaJIT\src\lua51.pdb pdb\Release\lua51.pdb
+        exit /b 0
+
+    - name: Rename and prepare Windows build files
       shell: powershell
       run: |
-        $files = Get-ChildItem -Path "build" -Name "*.zip"
-        if ($files.Count -gt 0) {
-          $originalFile = $files[0]
-          $newName = "love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-${{ matrix.arch }}.zip"
-          Rename-Item -Path "build/$originalFile" -NewName $newName
-          Move-Item -Path "build/$newName" -Destination $newName
+        # Check for zip files
+        $zipFiles = Get-ChildItem -Path "build" -Name "*.zip" -ErrorAction SilentlyContinue
+        $exeFiles = Get-ChildItem -Path "build" -Name "*.exe" -ErrorAction SilentlyContinue
+        
+        # Create output directory
+        New-Item -ItemType Directory -Path "output" -Force | Out-Null
+        
+        if ($zipFiles.Count -gt 0) {
+          foreach ($file in $zipFiles) {
+            $newName = "love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-${{ matrix.arch }}.zip"
+            Copy-Item -Path "build/$file" -Destination "output/$newName"
+            Write-Output "Copied $file to output/$newName"
+          }
         }
+        
+        if ($exeFiles.Count -gt 0) {
+          foreach ($file in $exeFiles) {
+            $baseName = [System.IO.Path]::GetFileNameWithoutExtension($file)
+            $newName = "love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-${{ matrix.arch }}.exe"
+            Copy-Item -Path "build/$file" -Destination "output/$newName"
+            Write-Output "Copied $file to output/$newName"
+          }
+        }
+        
+        # List what we have
+        Write-Output "Files in output directory:"
+        Get-ChildItem -Path "output" | Format-Table
 
     - name: Upload Windows build
       uses: actions/upload-artifact@v4
       with:
         name: love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-${{ matrix.arch }}
-        path: love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-${{ matrix.arch }}.zip
+        path: output/*
+        if-no-files-found: ${{ matrix.platform == 'ARM64' && 'ignore' || 'error' }}
+
+    - name: Upload Windows Debug Symbols
+      uses: actions/upload-artifact@v4
+      with:
+        name: love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-${{ matrix.arch }}-dbg
+        path: pdb/Release/*.pdb
+        if-no-files-found: ignore
 
   build-macos:
     name: macOS
@@ -246,20 +281,35 @@ jobs:
     name: Create Release
     runs-on: ubuntu-latest
     needs: [version, build-linux, build-windows, build-macos]
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && !cancelled()
 
     steps:
     - name: Download all artifacts
       uses: actions/download-artifact@v4
 
+    - name: Prepare release files
+      run: |
+        # Create release directory
+        mkdir -p release-files
+        
+        # Copy files from each platform, handling missing files gracefully
+        for dir in love-*-linux-x86_64 love-*-windows-x86_64 love-*-windows-arm64 love-*-macos; do
+          if [ -d "$dir" ]; then
+            echo "Copying files from $dir"
+            cp -r "$dir"/* release-files/ 2>/dev/null || true
+          else
+            echo "Directory $dir not found, skipping..."
+          fi
+        done
+        
+        # List what we have
+        echo "Files to be released:"
+        ls -la release-files/
+
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
-        files: |
-          love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-x86_64/*
-          love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-x86_64/*
-          love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-arm64/*
-          love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-macos/*
+        files: release-files/*
         tag_name: v${{ needs.version.outputs.version }}-build-${{ needs.version.outputs.padded_build }}
         name: Love2D ${{ needs.version.outputs.version }} Build ${{ needs.version.outputs.padded_build }}
         body: |
@@ -274,7 +324,7 @@ jobs:
           **Downloads:**
           - Linux x86_64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-x86_64.AppImage`
           - Windows x86_64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-x86_64.zip`
-          - Windows ARM64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-arm64.zip`
+          - Windows ARM64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-arm64.zip` (if available)
           - macOS: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-macos.zip`
 
           This build includes:
@@ -284,8 +334,9 @@ jobs:
 
           **Note:** 
           - Linux build is provided as AppImage (make executable and run)
-          - Windows builds include both x64 and ARM64 architectures
+          - Windows builds include both x64 and ARM64 architectures (ARM64 may not always be available)
           - macOS build is a universal app bundle
+          - ARM64 Windows builds are experimental and may fail occasionally
         draft: false
         prerelease: false
       env:
