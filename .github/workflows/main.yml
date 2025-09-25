@@ -1,0 +1,292 @@
+name: Build Love2D
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+env:
+  LOVE2D_REPO: "https://github.com/love2d/love.git"
+  LOVE2D_BRANCH: "main"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  version:
+    name: Determine Love2D version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+      padded_build: ${{ steps.get-version.outputs.padded_build }}
+      commit_hash: ${{ steps.get-version.outputs.commit_hash }}
+
+    steps:
+    - name: Get version and commit info
+      id: get-version
+      run: |
+        # Clone Love2D to get commit hash
+        git clone --depth 1 --branch ${{ env.LOVE2D_BRANCH }} ${{ env.LOVE2D_REPO }} love2d-temp
+        COMMIT_HASH=$(git -C love2d-temp rev-parse --short HEAD)
+        echo "version=$(date "+%Y.%m.%d")" >> $GITHUB_OUTPUT
+        echo "padded_build=$(printf '%05d' ${{ github.run_number }})" >> $GITHUB_OUTPUT
+        echo "commit_hash=$COMMIT_HASH" >> $GITHUB_OUTPUT
+        rm -rf love2d-temp
+
+  build-linux:
+    name: Linux (AppImage)
+    runs-on: ubuntu-22.04
+    needs: version
+    env:
+      LOVE_VERSION: ${{ needs.version.outputs.version }}
+      COMMIT_HASH: ${{ needs.version.outputs.commit_hash }}
+
+    steps:
+    - name: Update APT
+      run: sudo apt-get update
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get install --assume-yes build-essential git make cmake autoconf automake \
+                                          libtool pkg-config libasound2-dev libpulse-dev libaudio-dev \
+                                          libjack-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev \
+                                          libxfixes-dev libxi-dev libxinerama-dev libxxf86vm-dev libxss-dev \
+                                          libgl1-mesa-dev libdbus-1-dev libudev-dev libgles2-mesa-dev \
+                                          libegl1-mesa-dev libibus-1.0-dev fcitx-libs-dev libsamplerate0-dev \
+                                          libsndio-dev libwayland-dev libxkbcommon-dev libdrm-dev libgbm-dev \
+                                          libcurl4-openssl-dev libfuse2 libpipewire-0.3-dev libwayland-dev \
+                                          libdecor-0-dev liburing-dev libvulkan1
+
+    - name: Install Vulkan SDK
+      run: |
+        set -e
+        wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc
+        sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-1.3.283-jammy.list https://packages.lunarg.com/vulkan/1.3.283/lunarg-vulkan-1.3.283-jammy.list
+        sudo apt-get update
+        sudo apt-get install --assume-yes vulkan-sdk
+
+    - name: Checkout love-appimage-source
+      uses: actions/checkout@v4
+      with:
+        repository: love2d/love-appimage-source
+        ref: main
+
+    - name: Clone Love2D
+      run: |
+        git clone --recursive ${{ env.LOVE2D_REPO }} love2d-${{ needs.version.outputs.commit_hash }}
+        cd love2d-${{ needs.version.outputs.commit_hash }}
+        git checkout ${{ env.LOVE2D_BRANCH }}
+
+    - name: Get Dependencies for AppImage
+      shell: python
+      env:
+        LOVE_BRANCH: ${{ needs.version.outputs.commit_hash }}
+      run: |
+        import os
+        for i in range(250):
+            if os.system(f"make getdeps LOVE_BRANCH={os.environ['LOVE_BRANCH']}") == 0:
+                raise SystemExit(0)
+        raise Exception("make getdeps failed")
+
+    - name: Build AppImage
+      run: make LOVE_BRANCH=${{ needs.version.outputs.commit_hash }}
+
+    - name: Rename AppImage
+      run: |
+        mv love-${{ needs.version.outputs.commit_hash }}.AppImage love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-x86_64.AppImage
+
+    - name: Upload Linux build
+      uses: actions/upload-artifact@v4
+      with:
+        name: love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-x86_64
+        path: love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-x86_64.AppImage
+
+  build-windows:
+    name: Windows (${{ matrix.arch }})
+    runs-on: windows-2025
+    needs: version
+    strategy:
+      matrix:
+        include:
+        - platform: x64
+          arch: x86_64
+        - platform: ARM64
+          arch: arm64
+
+    env:
+      LOVE_VERSION: ${{ needs.version.outputs.version }}
+      COMMIT_HASH: ${{ needs.version.outputs.commit_hash }}
+
+    defaults:
+      run:
+        shell: cmd
+
+    steps:
+    - name: Setup Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+
+    - name: Clone Megasource
+      uses: actions/checkout@v4
+      with:
+        path: megasource
+        repository: love2d/megasource
+        ref: main
+
+    - name: Clone Love2D
+      run: |
+        git clone --recursive ${{ env.LOVE2D_REPO }} megasource/libs/love
+        cd megasource/libs/love
+        git checkout ${{ env.LOVE2D_BRANCH }}
+
+    - name: Download ANGLE (ARM64 only)
+      uses: robinraju/release-downloader@v1.9
+      if: matrix.platform == 'ARM64'
+      with:
+        repository: MikuAuahDark/angle-winbuild
+        tag: cr_5249
+        fileName: angle-win-${{ matrix.arch }}.zip
+        tarBall: false
+        zipBall: false
+        out-file-path: angle
+
+    - name: Extract ANGLE (ARM64 only)
+      if: matrix.platform == 'ARM64'
+      working-directory: angle
+      run: 7z x angle-win-${{ matrix.arch }}.zip
+
+    - name: Remove Strawberry Perl From Path
+      run: |
+        move /y C:\Strawberry C:\Strawberry_not_in_PATH
+        exit /b 0
+
+    - name: Configure
+      env:
+        CFLAGS: /Zi
+        CXXFLAGS: /Zi
+        LDFLAGS: /DEBUG:FULL /OPT:REF /OPT:ICF
+      run: |
+        if "${{ matrix.platform }}" == "ARM64" (
+          cmake -Bbuild -Smegasource -T v143 -A ${{ matrix.platform }},version=10.0.26100.0 --install-prefix %CD%\install -DCMAKE_PDB_OUTPUT_DIRECTORY=%CD%\pdb -DLOVE_EXTRA_DLLS=%CD%\angle\libEGL.dll;%CD%\angle\libGLESv2.dll
+        ) else (
+          cmake -Bbuild -Smegasource -T v143 -A ${{ matrix.platform }},version=10.0.26100.0 --install-prefix %CD%\install -DCMAKE_PDB_OUTPUT_DIRECTORY=%CD%\pdb
+        )
+
+    - name: Build and Package
+      run: cmake --build build --target PACKAGE --config Release -j2
+
+    - name: Rename Windows build
+      shell: powershell
+      run: |
+        $files = Get-ChildItem -Path "build" -Name "*.zip"
+        if ($files.Count -gt 0) {
+          $originalFile = $files[0]
+          $newName = "love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-${{ matrix.arch }}.zip"
+          Rename-Item -Path "build/$originalFile" -NewName $newName
+          Move-Item -Path "build/$newName" -Destination $newName
+        }
+
+    - name: Upload Windows build
+      uses: actions/upload-artifact@v4
+      with:
+        name: love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-${{ matrix.arch }}
+        path: love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-${{ matrix.arch }}.zip
+
+  build-macos:
+    name: macOS
+    runs-on: macos-latest
+    needs: version
+    env:
+      LOVE_VERSION: ${{ needs.version.outputs.version }}
+      COMMIT_HASH: ${{ needs.version.outputs.commit_hash }}
+
+    steps:
+    - name: Clone Love2D
+      run: |
+        git clone --recursive ${{ env.LOVE2D_REPO }} love2d
+        cd love2d
+        git checkout ${{ env.LOVE2D_BRANCH }}
+
+    - name: Clone Dependencies
+      uses: actions/checkout@v4
+      with:
+        path: apple-dependencies
+        repository: love2d/love-apple-dependencies
+        ref: main
+
+    - name: Move Dependencies
+      run: |
+        mv apple-dependencies/macOS/Frameworks love2d/platform/xcode/macosx
+        mv apple-dependencies/shared love2d/platform/xcode
+
+    - name: Build
+      working-directory: love2d
+      run: |
+        xcodebuild clean archive -project platform/xcode/love.xcodeproj -scheme love-macosx -configuration Release -destination generic/platform=macOS -archivePath love-macos.xcarchive
+
+    - name: Export Archive
+      working-directory: love2d
+      run: |
+        xcodebuild -exportArchive -archivePath love-macos.xcarchive -exportPath love-macos -exportOptionsPlist platform/xcode/macosx/macos-copy-app.plist
+
+    - name: Create ZIP archive
+      working-directory: love2d
+      run: |
+        ditto -c -k --sequesterRsrc --keepParent love-macos/love.app love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-macos.zip
+
+    - name: Upload macOS build
+      uses: actions/upload-artifact@v4
+      with:
+        name: love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-macos
+        path: love2d/love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-macos.zip
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [version, build-linux, build-windows, build-macos]
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-x86_64/*
+          love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-x86_64/*
+          love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-arm64/*
+          love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-macos/*
+        tag_name: v${{ needs.version.outputs.version }}-build-${{ needs.version.outputs.padded_build }}
+        name: Love2D ${{ needs.version.outputs.version }} Build ${{ needs.version.outputs.padded_build }}
+        body: |
+          Automated build of Love2D ${{ needs.version.outputs.version }} for multiple platforms
+
+          Built from upstream Love2D repository
+          Build number: ${{ needs.version.outputs.padded_build }}
+          Commit: ${{ needs.version.outputs.commit_hash }}
+          Repository: ${{ env.LOVE2D_REPO }}
+          Branch: ${{ env.LOVE2D_BRANCH }}
+
+          **Downloads:**
+          - Linux x86_64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-x86_64.AppImage`
+          - Windows x86_64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-x86_64.zip`
+          - Windows ARM64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-arm64.zip`
+          - macOS: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-macos.zip`
+
+          This build includes:
+          - Love2D Game Framework
+          - All required runtime libraries
+          - Cross-platform compatibility
+
+          **Note:** 
+          - Linux build is provided as AppImage (make executable and run)
+          - Windows builds include both x64 and ARM64 architectures
+          - macOS build is a universal app bundle
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
