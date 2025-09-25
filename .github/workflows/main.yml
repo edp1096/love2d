@@ -129,6 +129,12 @@ jobs:
       with:
         python-version: "3.10"
 
+    - name: Setup MSBuild memory optimization
+      run: |
+        echo "Setting MSBuild to use less memory"
+        set CL=/MP1
+        set MSBUILD_ARGS=/maxcpucount:1 /nodeReuse:false
+
     - name: Clone Megasource
       uses: actions/checkout@v4
       with:
@@ -177,7 +183,22 @@ jobs:
         )
 
     - name: Build and Package
-      run: cmake --build build --target PACKAGE --config Release -j2
+      timeout-minutes: 120
+      run: |
+        echo "Starting build at %date% %time%"
+        cmake --build build --target PACKAGE --config Release -j1 --verbose
+        if errorlevel 1 (
+          echo "Build failed at %date% %time%"
+          exit /b 1
+        )
+        echo "Build completed successfully at %date% %time%"
+
+    - name: Check build results
+      run: |
+        echo "Checking build outputs..."
+        dir build
+        dir build\*.zip 2>nul || echo "No zip files found"
+        dir build\*.exe 2>nul || echo "No exe files found"
 
     - name: Copy LuaJIT Debug Symbols
       run: |
