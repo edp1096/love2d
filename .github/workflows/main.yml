@@ -413,6 +413,13 @@ jobs:
         
         # Add lua54 subdirectory
         echo "add_subdirectory(libs/lua54)" >> CMakeLists.txt
+        
+        # Enable Objective-C language support in main CMakeLists.txt
+        sed -i '' '1i\
+        cmake_minimum_required(VERSION 3.5)\
+        enable_language(OBJC)\
+        enable_language(OBJCXX)\
+        ' CMakeLists.txt
     - name: Build Lua 5.4 version
       if: matrix.lua_version == 'lua54'
       working-directory: megasource-lua54
@@ -420,7 +427,7 @@ jobs:
         mkdir build
         cd build
         
-        # Fix CMake minimum version compatibility issue and enable Objective-C
+        # Configure with explicit language enables and fix CMake issues
         cmake .. \
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 \
