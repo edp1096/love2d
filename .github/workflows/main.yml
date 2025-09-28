@@ -226,11 +226,11 @@ jobs:
       run: |
         cd megasource
         rem Download and configure Lua 5.4 instead of LuaJIT
-        curl -L -o lua-5.4.8.tar.gz https://www.lua.org/ftp/lua-5.4.8.tar.gz
-        7z x lua-5.4.8.tar.gz
-        7z x lua-5.4.8.tar
+        curl -L -o lua-5.4.7.tar.gz https://www.lua.org/ftp/lua-5.4.7.tar.gz
+        7z x lua-5.4.7.tar.gz
+        7z x lua-5.4.7.tar
         mkdir libs\lua54
-        xcopy /E /I lua-5.4.8\* libs\lua54\
+        xcopy /E /I lua-5.4.7\* libs\lua54\
         rem Create CMakeLists.txt for Lua 5.4
         echo # CMake configuration for Lua 5.4 > libs\lua54\CMakeLists.txt
         echo set(LUA54_SOURCES >> libs\lua54\CMakeLists.txt
@@ -335,9 +335,6 @@ jobs:
     env:
       ALSOFT_CONF: testing/resources/alsoft.conf
     steps:
-    - name: Install Lua 5.4
-      if: matrix.lua_version == 'lua54'
-      run: brew install lua@5.4
     - name: Checkout Love2D
       run: |
         git clone --recursive ${{ env.LOVE2D_REPO }} love2d
@@ -353,22 +350,93 @@ jobs:
       run: |
         mv apple-dependencies/macOS/Frameworks love2d/platform/xcode/macosx
         mv apple-dependencies/shared love2d/platform/xcode
-    # Modify Xcode project for Lua 5.4
-    - name: Configure for Lua 5.4
+    # Build LuaJIT version using Xcode (original method)
+    - name: Build with Xcode (LuaJIT)
+      if: matrix.lua_version == 'luajit'
+      working-directory: love2d
+      run: |
+        xcodebuild clean archive -project platform/xcode/love.xcodeproj -scheme love-macosx -configuration Release -destination generic/platform=macOS -archivePath love-macos.xcarchive
+    - name: Export Archive (LuaJIT)
+      if: matrix.lua_version == 'luajit'
+      working-directory: love2d
+      run: |
+        xcodebuild -exportArchive -archivePath love-macos.xcarchive -exportPath love-macos -exportOptionsPlist platform/xcode/macosx/macos-copy-app.plist
+    # Build Lua 5.4 version using megasource approach
+    - name: Setup Lua 5.4 build environment
       if: matrix.lua_version == 'lua54'
       run: |
-        cd love2d
-        # This would require modifying the Xcode project file to use system Lua instead of LuaJIT
-        # For now, we'll use a simpler approach with CMake
-        mkdir build-lua54
-        cd build-lua54
-        cmake .. -DLOVE_JIT=OFF -DCMAKE_BUILD_TYPE=Release -DLUA_INCLUDE_DIR=/usr/local/include/lua5.4 -DLUA_LIBRARY=/usr/local/lib/liblua5.4.dylib
+        # Install Lua 5.4
+        brew install lua@5.4
+        
+        # Clone megasource for Lua 5.4 build (similar to Windows approach but for macOS)
+        git clone --recursive https://github.com/love2d/megasource.git megasource-lua54
+        
+        # Copy Love2D source to megasource
+        cp -r love2d/* megasource-lua54/libs/love/
+    - name: Modify megasource for Lua 5.4 (macOS)
+      if: matrix.lua_version == 'lua54'
+      working-directory: megasource-lua54
+      run: |
+        # Replace LuaJIT with Lua 5.4 in CMakeLists.txt
+        sed -i '' 's/add_subdirectory(libs\/LuaJIT)/# add_subdirectory(libs\/LuaJIT)/' CMakeLists.txt
+        sed -i '' 's/set(LOVE_LUA_LIBRARY LuaJIT)/set(LOVE_LUA_LIBRARY lua54)/' CMakeLists.txt
+        
+        # Download and prepare Lua 5.4 source
+        curl -L -o lua-5.4.8.tar.gz https://www.lua.org/ftp/lua-5.4.8.tar.gz
+        tar -xzf lua-5.4.8.tar.gz
+        mv lua-5.4.8 libs/lua54
+        
+        # Create CMakeLists.txt for Lua 5.4
+        cat > libs/lua54/CMakeLists.txt << 'EOF'
+        # CMake configuration for Lua 5.4
+        set(LUA54_SOURCES
+          src/lapi.c src/lcode.c src/lctype.c src/ldebug.c src/ldo.c
+          src/ldump.c src/lfunc.c src/lgc.c src/llex.c src/lmem.c
+          src/lobject.c src/lopcodes.c src/lparser.c src/lstate.c
+          src/lstring.c src/ltable.c src/ltm.c src/lundump.c
+          src/lvm.c src/lzio.c src/lauxlib.c src/lbaselib.c
+          src/lcorolib.c src/ldblib.c src/liolib.c src/lmathlib.c
+          src/loslib.c src/lstrlib.c src/ltablib.c src/lutf8lib.c
+          src/loadlib.c src/linit.c)
+        
+        add_library(lua54 STATIC ${LUA54_SOURCES})
+        target_include_directories(lua54 PUBLIC src)
+        target_compile_definitions(lua54 PUBLIC LUA_USE_MACOSX)
+        
+        # Create an alias to match LuaJIT interface
+        add_library(LuaJIT ALIAS lua54)
+        EOF
+        
+        # Add lua54 subdirectory
+        echo "add_subdirectory(libs/lua54)" >> CMakeLists.txt
+    - name: Build Lua 5.4 version
+      if: matrix.lua_version == 'lua54'
+      working-directory: megasource-lua54
+      run: |
+        mkdir build
+        cd build
+        
+        cmake .. \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 \
+          -DLOVE_JIT=OFF
+        
         make -j$(sysctl -n hw.ncpu)
-        # Package the built binary
+        
+        # Package as .app bundle
         mkdir -p love.app/Contents/MacOS
-        mkdir -p love.app/Contents/Resources
+        mkdir -p love.app/Contents/Resources  
+        mkdir -p love.app/Contents/Frameworks
+        
+        # Copy binary
         cp love love.app/Contents/MacOS/
-        # Create basic Info.plist
+        
+        # Copy frameworks from apple-dependencies if available
+        if [ -d "../libs/love/platform/xcode/macosx/Frameworks" ]; then
+          cp -r ../libs/love/platform/xcode/macosx/Frameworks/*.framework love.app/Contents/Frameworks/ 2>/dev/null || true
+        fi
+        
+        # Create Info.plist
         cat > love.app/Contents/Info.plist << 'EOF'
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -382,26 +450,20 @@ jobs:
             <string>LÖVE</string>
             <key>CFBundleVersion</key>
             <string>12.0</string>
+            <key>CFBundleShortVersionString</key>
+            <string>12.0</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>10.15</string>
         </dict>
         </plist>
         EOF
-    - name: Build with Xcode (LuaJIT)
-      if: matrix.lua_version == 'luajit'
-      working-directory: love2d
-      run: |
-        xcodebuild clean archive -project platform/xcode/love.xcodeproj -scheme love-macosx -configuration Release -destination generic/platform=macOS -archivePath love-macos.xcarchive
-    - name: Export Archive (LuaJIT)
-      if: matrix.lua_version == 'luajit'
-      working-directory: love2d
-      run: |
-        xcodebuild -exportArchive -archivePath love-macos.xcarchive -exportPath love-macos -exportOptionsPlist platform/xcode/macosx/macos-copy-app.plist
     - name: Zip Archive
       working-directory: love2d
       run: |
         if [ "${{ matrix.lua_version }}" == "luajit" ]; then
           ditto -c -k --sequesterRsrc --keepParent love-macos/love.app love-macos-${{ matrix.lua_version }}.zip
         else
-          ditto -c -k --sequesterRsrc --keepParent build-lua54/love.app love-macos-${{ matrix.lua_version }}.zip
+          ditto -c -k --sequesterRsrc --keepParent ../megasource-lua54/build/love.app love-macos-${{ matrix.lua_version }}.zip
         fi
     - name: Artifact
       uses: actions/upload-artifact@v4
