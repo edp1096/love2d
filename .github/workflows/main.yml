@@ -383,18 +383,17 @@ jobs:
         mkdir -p release-files
         
         # Copy files from each artifact directory, using original artifact names
-        for dir in love-linux-*-*.AppImage love-windows-*-* love-macos-luajit; do
+        for dir in love-linux-*-luajit.AppImage love-windows-*-* love-macos-luajit; do
           if [ -d "$dir" ]; then
             echo "Processing directory: $dir"
             find "$dir" -type f \( -name "*.AppImage" -o -name "*.zip" -o -name "*.exe" \) | while read file; do
               # Extract architecture and lua version from directory name
               basename_file=$(basename "$file")
               case "$dir" in
-                *linux-*-*)
-                  if [[ "$dir" =~ linux-([^-]+)-([^.]+) ]]; then
+                *linux-*-luajit*)
+                  if [[ "$dir" =~ linux-([^-]+)-luajit ]]; then
                     arch="${BASH_REMATCH[1]}"
-                    lua_ver="${BASH_REMATCH[2]}"
-                    cp "$file" "release-files/love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-${arch}-${lua_ver}.AppImage"
+                    cp "$file" "release-files/love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-${arch}-luajit.AppImage"
                   fi
                   ;;
                 *windows-*-*)
@@ -434,16 +433,14 @@ jobs:
 
           **Available builds:**
           
-          **LuaJIT builds (JIT compilation enabled):**
+          **LuaJIT builds (JIT compilation enabled) - All platforms:**
           - Linux x86_64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-X64-luajit.AppImage`
           - Linux ARM64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-ARM64-luajit.AppImage`
           - Windows x64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-x64-luajit.zip`
           - Windows ARM64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-arm64-luajit.zip`
           - macOS: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-macos-luajit.zip`
 
-          **Lua 5.4 builds (standard Lua interpreter) - Linux and Windows only:**
-          - Linux x86_64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-X64-lua54.AppImage`
-          - Linux ARM64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-ARM64-lua54.AppImage`
+          **Lua 5.4 builds (standard Lua interpreter) - Windows only:**
           - Windows x64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-x64-lua54.zip`
           - Windows ARM64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-arm64-lua54.zip`
 
@@ -451,11 +448,14 @@ jobs:
           - **LuaJIT**: Better performance, JIT compilation, compatible with existing Love2D games
           - **Lua 5.4**: Latest Lua features, better debugging support, more standard Lua compatibility
 
-          **Platform notes:**
-          - **Linux**: Builds provided as AppImage (make executable and run)
-          - **Windows**: ARM64 builds may not always be available
+          **Platform limitations:**
+          - **Linux**: Only LuaJIT build available (love-appimage-source doesn't support Lua 5.4)
+          - **Windows**: Both LuaJIT and Lua 5.4 builds available (ARM64 may not always be available)
           - **macOS**: Only LuaJIT build available (CMake not officially supported on Apple platforms)
-          - Choose LuaJIT for performance, Lua 5.4 for latest language features
+          
+          **Usage notes:**
+          - Linux builds are provided as AppImage (make executable and run)
+          - Choose LuaJIT for performance and compatibility, Lua 5.4 for latest language features
         draft: false
         prerelease: false
       env:
