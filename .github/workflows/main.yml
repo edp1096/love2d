@@ -368,11 +368,15 @@ jobs:
         # Install Lua 5.4
         brew install lua@5.4
         
-        # Clone megasource for Lua 5.4 build (similar to Windows approach but for macOS)
-        git clone --recursive https://github.com/love2d/megasource.git megasource-lua54
+        # Clone megasource for Lua 5.4 build
+        git clone https://github.com/love2d/megasource.git megasource-lua54
         
-        # Copy Love2D source to megasource
-        cp -r love2d/* megasource-lua54/libs/love/
+        # Checkout Love2D source directly into megasource (overwrite the existing love submodule)
+        rm -rf megasource-lua54/libs/love
+        git clone --recursive ${{ env.LOVE2D_REPO }} megasource-lua54/libs/love
+        cd megasource-lua54/libs/love
+        git checkout ${{ env.LOVE2D_BRANCH }}
+        cd ../../..
     - name: Modify megasource for Lua 5.4 (macOS)
       if: matrix.lua_version == 'lua54'
       working-directory: megasource-lua54
