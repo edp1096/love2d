@@ -420,12 +420,16 @@ jobs:
         mkdir build
         cd build
         
-        # Fix CMake minimum version compatibility issue
+        # Fix CMake minimum version compatibility issue and enable Objective-C
         cmake .. \
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 \
           -DLOVE_JIT=OFF \
-          -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+          -DCMAKE_C_COMPILER=clang \
+          -DCMAKE_CXX_COMPILER=clang++ \
+          -DCMAKE_OBJC_COMPILER=clang \
+          -DCMAKE_OBJCXX_COMPILER=clang++
         
         make -j$(sysctl -n hw.ncpu)
         
