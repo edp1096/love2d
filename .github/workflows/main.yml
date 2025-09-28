@@ -89,6 +89,30 @@ jobs:
         sed -i 's/find_package(LuaJIT REQUIRED)/find_package(Lua REQUIRED)/' CMakeLists.txt
         sed -i 's/LuaJIT::/Lua::/' CMakeLists.txt
         sed -i 's/LUAJIT_/LUA_/g' CMakeLists.txt
+    - name: Create Lua 5.4 Makefile
+      if: matrix.lua_version == 'lua54'
+      run: |
+        # Detect library path based on architecture
+        if [ "${{ runner.arch }}" == "ARM64" ]; then
+          LUA_LIB_PATH="/usr/lib/aarch64-linux-gnu/liblua5.4.so"
+        else
+          LUA_LIB_PATH="/usr/lib/x86_64-linux-gnu/liblua5.4.so"
+        fi
+        
+        cat > Makefile.lua54 << EOF
+        getdeps:
+        	mkdir -p \$(LOVE_BRANCH)
+        	cp -r love2d-\$(LOVE_BRANCH)/* \$(LOVE_BRANCH)/
+        	echo "Using system Lua 5.4"
+        
+        build: getdeps
+        	cd \$(LOVE_BRANCH) && mkdir -p build && cd build && cmake .. -DLOVE_JIT=OFF -DLUA_INCLUDE_DIR=/usr/include/lua5.4 -DLUA_LIBRARY=${LUA_LIB_PATH} && make -j\$(nproc)
+        
+        clean:
+        	rm -rf \$(LOVE_BRANCH)
+        
+        .PHONY: getdeps build clean
+        EOF
     - name: Get Dependencies for AppImage
       shell: python
       env:
@@ -96,25 +120,6 @@ jobs:
         LUA_VERSION: ${{ matrix.lua_version }}
       run: |
         import os
-        # Create custom Makefile for Lua 5.4 if needed
-        if os.environ.get('LUA_VERSION') == 'lua54':
-            makefile_content = '''
-getdeps:
-\tmkdir -p $(LOVE_BRANCH)
-\tcp -r love2d-$(LOVE_BRANCH)/* $(LOVE_BRANCH)/
-\techo "Using system Lua 5.4"
-
-build: getdeps
-\tcd $(LOVE_BRANCH) && mkdir -p build && cd build && cmake .. -DLOVE_JIT=OFF -DLUA_INCLUDE_DIR=/usr/include/lua5.4 -DLUA_LIBRARY=/usr/lib/x86_64-linux-gnu/liblua5.4.so && make -j$(nproc)
-
-clean:
-\trm -rf $(LOVE_BRANCH)
-
-.PHONY: getdeps build clean
-'''
-            with open('Makefile.lua54', 'w') as f:
-                f.write(makefile_content)
-        
         for i in range(250):
             if os.environ.get('LUA_VERSION') == 'lua54':
                 if os.system(f"make -f Makefile.lua54 getdeps LOVE_BRANCH={os.environ['LOVE_BRANCH']}") == 0:
