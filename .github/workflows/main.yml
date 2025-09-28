@@ -420,10 +420,12 @@ jobs:
         mkdir build
         cd build
         
+        # Fix CMake minimum version compatibility issue
         cmake .. \
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 \
-          -DLOVE_JIT=OFF
+          -DLOVE_JIT=OFF \
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5
         
         make -j$(sysctl -n hw.ncpu)
         
