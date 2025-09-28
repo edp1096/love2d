@@ -226,11 +226,11 @@ jobs:
       run: |
         cd megasource
         rem Download and configure Lua 5.4 instead of LuaJIT
-        curl -L -o lua-5.4.7.tar.gz https://www.lua.org/ftp/lua-5.4.7.tar.gz
-        7z x lua-5.4.7.tar.gz
-        7z x lua-5.4.7.tar
+        curl -L -o lua-5.4.8.tar.gz https://www.lua.org/ftp/lua-5.4.8.tar.gz
+        7z x lua-5.4.8.tar.gz
+        7z x lua-5.4.8.tar
         mkdir libs\lua54
-        xcopy /E /I lua-5.4.7\* libs\lua54\
+        xcopy /E /I lua-5.4.8\* libs\lua54\
         rem Create CMakeLists.txt for Lua 5.4
         echo # CMake configuration for Lua 5.4 > libs\lua54\CMakeLists.txt
         echo set(LUA54_SOURCES >> libs\lua54\CMakeLists.txt
