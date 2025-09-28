@@ -40,6 +40,7 @@ jobs:
     strategy:
       matrix:
         runner: [ubuntu-22.04, ubuntu-24.04-arm]
+        lua_version: [luajit, lua54]
     env:
       ALSOFT_CONF: love2d-${{ needs.version.outputs.commit_hash }}/testing/resources/alsoft.conf
       VK_LAYER_SETTINGS_PATH: love2d-${{ needs.version.outputs.commit_hash }}/testing/resources/vk_layer_settings.txt
@@ -58,6 +59,9 @@ jobs:
                                           libsndio-dev libwayland-dev libxkbcommon-dev libdrm-dev libgbm-dev \
                                           libcurl4-openssl-dev libfuse2 libpipewire-0.3-dev libwayland-dev \
                                           libdecor-0-dev liburing-dev libvulkan1
+    - name: Install Lua 5.4 dev packages
+      if: matrix.lua_version == 'lua54'
+      run: sudo apt-get install --assume-yes liblua5.4-dev
     - name: Install Vulkan SDK
       if: ${{ runner.arch == 'X64' }}
       run: |
@@ -71,27 +75,65 @@ jobs:
       with:
         repository: love2d/love-appimage-source
         ref: main
-    - name: Checkout LÖVE
+    - name: Checkout LÃ–VE
       run: |
         git clone --recursive ${{ env.LOVE2D_REPO }} love2d-${{ needs.version.outputs.commit_hash }}
         cd love2d-${{ needs.version.outputs.commit_hash }}
         git checkout ${{ env.LOVE2D_BRANCH }}
+    # Modify Love2D build to use Lua 5.4 instead of LuaJIT
+    - name: Configure Love2D for Lua 5.4
+      if: matrix.lua_version == 'lua54'
+      run: |
+        cd love2d-${{ needs.version.outputs.commit_hash }}
+        # Modify CMakeLists.txt to use system Lua instead of LuaJIT
+        sed -i 's/find_package(LuaJIT REQUIRED)/find_package(Lua REQUIRED)/' CMakeLists.txt
+        sed -i 's/LuaJIT::/Lua::/' CMakeLists.txt
+        sed -i 's/LUAJIT_/LUA_/g' CMakeLists.txt
     - name: Get Dependencies for AppImage
       shell: python
       env:
         LOVE_BRANCH: ${{ needs.version.outputs.commit_hash }}
+        LUA_VERSION: ${{ matrix.lua_version }}
       run: |
         import os
+        # Create custom Makefile for Lua 5.4 if needed
+        if os.environ.get('LUA_VERSION') == 'lua54':
+            makefile_content = '''
+getdeps:
+\tmkdir -p $(LOVE_BRANCH)
+\tcp -r love2d-$(LOVE_BRANCH)/* $(LOVE_BRANCH)/
+\techo "Using system Lua 5.4"
+
+build: getdeps
+\tcd $(LOVE_BRANCH) && mkdir -p build && cd build && cmake .. -DLOVE_JIT=OFF -DLUA_INCLUDE_DIR=/usr/include/lua5.4 -DLUA_LIBRARY=/usr/lib/x86_64-linux-gnu/liblua5.4.so && make -j$(nproc)
+
+clean:
+\trm -rf $(LOVE_BRANCH)
+
+.PHONY: getdeps build clean
+'''
+            with open('Makefile.lua54', 'w') as f:
+                f.write(makefile_content)
+        
         for i in range(250):
-            if os.system(f"make getdeps LOVE_BRANCH={os.environ['LOVE_BRANCH']}") == 0:
-                raise SystemExit(0)
+            if os.environ.get('LUA_VERSION') == 'lua54':
+                if os.system(f"make -f Makefile.lua54 getdeps LOVE_BRANCH={os.environ['LOVE_BRANCH']}") == 0:
+                    raise SystemExit(0)
+            else:
+                if os.system(f"make getdeps LOVE_BRANCH={os.environ['LOVE_BRANCH']}") == 0:
+                    raise SystemExit(0)
         raise Exception("make getdeps failed")
     - name: Build AppImage
-      run: make LOVE_BRANCH=${{ needs.version.outputs.commit_hash }}
+      run: |
+        if [ "${{ matrix.lua_version }}" == "lua54" ]; then
+          make -f Makefile.lua54 LOVE_BRANCH=${{ needs.version.outputs.commit_hash }}
+        else
+          make LOVE_BRANCH=${{ needs.version.outputs.commit_hash }}
+        fi
     - name: Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: love-linux-${{ runner.arch }}.AppImage
+        name: love-linux-${{ runner.arch }}-${{ matrix.lua_version }}.AppImage
         path: love-${{ needs.version.outputs.commit_hash }}.AppImage
 
   Windows:
@@ -102,6 +144,7 @@ jobs:
     strategy:
       matrix:
         platform: [x64, ARM64]
+        lua_version: [luajit, lua54]
     defaults:
       run:
         shell: cmd
@@ -110,11 +153,22 @@ jobs:
     - name: Define Variables
       id: vars
       run: |
-        rem JIT Modules
+        rem JIT Modules (only for LuaJIT builds)
         if "${{ matrix.platform }}" == "x64" (
-          (echo jitmodules=1)>> "%GITHUB_OUTPUT%"
+          if "${{ matrix.lua_version }}" == "luajit" (
+            (echo jitmodules=1)>> "%GITHUB_OUTPUT%"
+          ) else (
+            (echo jitmodules=0)>> "%GITHUB_OUTPUT%"
+          )
         ) else (
           (echo jitmodules=0)>> "%GITHUB_OUTPUT%"
+        )
+        
+        rem Lua version specific settings
+        if "${{ matrix.lua_version }}" == "lua54" (
+          (echo cmake_lua_opts=-DLOVE_JIT=OFF -DLUA_FORCE_BUILD=ON)>> "%GITHUB_OUTPUT%"
+        ) else (
+          (echo cmake_lua_opts=)>> "%GITHUB_OUTPUT%"
         )
         
         rem Architecture-Specific Switch
@@ -161,6 +215,34 @@ jobs:
         path: megasource
         repository: love2d/megasource
         ref: main
+    # Modify megasource for Lua 5.4 support
+    - name: Modify Megasource for Lua 5.4
+      if: matrix.lua_version == 'lua54'
+      run: |
+        cd megasource
+        rem Download and configure Lua 5.4 instead of LuaJIT
+        curl -L -o lua-5.4.8.tar.gz https://www.lua.org/ftp/lua-5.4.8.tar.gz
+        7z x lua-5.4.8.tar.gz
+        7z x lua-5.4.8.tar
+        mkdir libs\lua54
+        xcopy /E /I lua-5.4.8\* libs\lua54\
+        rem Create CMakeLists.txt for Lua 5.4
+        echo # CMake configuration for Lua 5.4 > libs\lua54\CMakeLists.txt
+        echo set(LUA54_SOURCES >> libs\lua54\CMakeLists.txt
+        echo   src/lapi.c src/lcode.c src/lctype.c src/ldebug.c src/ldo.c >> libs\lua54\CMakeLists.txt
+        echo   src/ldump.c src/lfunc.c src/lgc.c src/llex.c src/lmem.c >> libs\lua54\CMakeLists.txt
+        echo   src/lobject.c src/lopcodes.c src/lparser.c src/lstate.c >> libs\lua54\CMakeLists.txt
+        echo   src/lstring.c src/ltable.c src/ltm.c src/lundump.c >> libs\lua54\CMakeLists.txt
+        echo   src/lvm.c src/lzio.c src/lauxlib.c src/lbaselib.c >> libs\lua54\CMakeLists.txt
+        echo   src/lcorolib.c src/ldblib.c src/liolib.c src/lmathlib.c >> libs\lua54\CMakeLists.txt
+        echo   src/loslib.c src/lstrlib.c src/ltablib.c src/lutf8lib.c >> libs\lua54\CMakeLists.txt
+        echo   src/loadlib.c src/linit.c) >> libs\lua54\CMakeLists.txt
+        echo add_library(lua54 STATIC ${LUA54_SOURCES}) >> libs\lua54\CMakeLists.txt
+        echo target_include_directories(lua54 PUBLIC src) >> libs\lua54\CMakeLists.txt
+        echo target_compile_definitions(lua54 PUBLIC LUA_BUILD_AS_DLL) >> libs\lua54\CMakeLists.txt
+        rem Modify main CMakeLists.txt to use Lua 5.4
+        powershell -Command "(Get-Content CMakeLists.txt) -replace 'add_subdirectory\(libs/LuaJIT\)', 'add_subdirectory(libs/lua54)' | Set-Content CMakeLists.txt"
+        powershell -Command "(Get-Content CMakeLists.txt) -replace 'set\(LOVE_LUA_LIBRARY LuaJIT\)', 'set(LOVE_LUA_LIBRARY lua54)' | Set-Content CMakeLists.txt"
     - id: megasource
       name: Get Megasource Commit SHA
       shell: python
@@ -199,12 +281,16 @@ jobs:
         CFLAGS: /Zi
         CXXFLAGS: /Zi
         LDFLAGS: /DEBUG:FULL /OPT:REF /OPT:ICF
-      run: cmake -Bbuild -Smegasource -T v143 -A ${{ matrix.platform }},version=10.0.26100.0 --install-prefix %CD%\install -DCMAKE_PDB_OUTPUT_DIRECTORY=%CD%\pdb ${{ steps.vars.outputs.moredef }}
+      run: cmake -Bbuild -Smegasource -T v143 -A ${{ matrix.platform }},version=10.0.26100.0 --install-prefix %CD%\install -DCMAKE_PDB_OUTPUT_DIRECTORY=%CD%\pdb ${{ steps.vars.outputs.moredef }} ${{ steps.vars.outputs.cmake_lua_opts }}
     - name: Install
       run: cmake --build build --target PACKAGE --config Release -j2
-    - name: Copy LuaJIT lua51.pdb
+    - name: Copy Lua PDB files
       run: |
-        copy /Y build\libs\LuaJIT\src\lua51.pdb pdb\Release\lua51.pdb
+        if "${{ matrix.lua_version }}" == "luajit" (
+          copy /Y build\libs\LuaJIT\src\lua51.pdb pdb\Release\lua51.pdb
+        ) else (
+          copy /Y build\libs\lua54\lua54.pdb pdb\Release\lua54.pdb
+        )
         exit /b 0
     - name: Add srcsrv to PATH
       run: |
@@ -214,12 +300,11 @@ jobs:
         python source_index.py ^
         --source %CD%\megasource\libs\love https://raw.githubusercontent.com/love2d/love/${{ needs.version.outputs.commit_hash }} ^
         --source %CD%\megasource https://raw.githubusercontent.com/love2d/megasource/${{ steps.megasource.outputs.commit }} ^
-        --source %CD%\build\libs\LuaJIT https://raw.githubusercontent.com/love2d/megasource/${{ steps.megasource.outputs.commit }}/libs/LuaJIT ^
         pdb\Release\*.pdb
     - name: Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: love-windows-${{ steps.vars.outputs.arch }}
+        name: love-windows-${{ steps.vars.outputs.arch }}-${{ matrix.lua_version }}
         path: |
           build/*.zip
           build/*.exe
@@ -233,15 +318,21 @@ jobs:
     - name: Artifact PDB
       uses: actions/upload-artifact@v4
       with:
-        name: love-windows-${{ steps.vars.outputs.arch }}-dbg
+        name: love-windows-${{ steps.vars.outputs.arch }}-${{ matrix.lua_version }}-dbg
         path: pdb/Release/*.pdb
 
   macOS:
     runs-on: macos-latest
     needs: version
+    strategy:
+      matrix:
+        lua_version: [luajit, lua54]
     env:
       ALSOFT_CONF: testing/resources/alsoft.conf
     steps:
+    - name: Install Lua 5.4
+      if: matrix.lua_version == 'lua54'
+      run: brew install lua@5.4
     - name: Checkout Love2D
       run: |
         git clone --recursive ${{ env.LOVE2D_REPO }} love2d
@@ -257,23 +348,61 @@ jobs:
       run: |
         mv apple-dependencies/macOS/Frameworks love2d/platform/xcode/macosx
         mv apple-dependencies/shared love2d/platform/xcode
-    - name: Build
+    # Modify Xcode project for Lua 5.4
+    - name: Configure for Lua 5.4
+      if: matrix.lua_version == 'lua54'
+      run: |
+        cd love2d
+        # This would require modifying the Xcode project file to use system Lua instead of LuaJIT
+        # For now, we'll use a simpler approach with CMake
+        mkdir build-lua54
+        cd build-lua54
+        cmake .. -DLOVE_JIT=OFF -DCMAKE_BUILD_TYPE=Release -DLUA_INCLUDE_DIR=/usr/local/include/lua5.4 -DLUA_LIBRARY=/usr/local/lib/liblua5.4.dylib
+        make -j$(sysctl -n hw.ncpu)
+        # Package the built binary
+        mkdir -p love.app/Contents/MacOS
+        mkdir -p love.app/Contents/Resources
+        cp love love.app/Contents/MacOS/
+        # Create basic Info.plist
+        cat > love.app/Contents/Info.plist << 'EOF'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>CFBundleExecutable</key>
+            <string>love</string>
+            <key>CFBundleIdentifier</key>
+            <string>org.love2d.love</string>
+            <key>CFBundleName</key>
+            <string>LÖVE</string>
+            <key>CFBundleVersion</key>
+            <string>12.0</string>
+        </dict>
+        </plist>
+        EOF
+    - name: Build with Xcode (LuaJIT)
+      if: matrix.lua_version == 'luajit'
       working-directory: love2d
       run: |
         xcodebuild clean archive -project platform/xcode/love.xcodeproj -scheme love-macosx -configuration Release -destination generic/platform=macOS -archivePath love-macos.xcarchive
-    - name: Export Archive
+    - name: Export Archive (LuaJIT)
+      if: matrix.lua_version == 'luajit'
       working-directory: love2d
       run: |
         xcodebuild -exportArchive -archivePath love-macos.xcarchive -exportPath love-macos -exportOptionsPlist platform/xcode/macosx/macos-copy-app.plist
     - name: Zip Archive
       working-directory: love2d
       run: |
-        ditto -c -k --sequesterRsrc --keepParent love-macos/love.app love-macos.zip
+        if [ "${{ matrix.lua_version }}" == "luajit" ]; then
+          ditto -c -k --sequesterRsrc --keepParent love-macos/love.app love-macos-${{ matrix.lua_version }}.zip
+        else
+          ditto -c -k --sequesterRsrc --keepParent build-lua54/love.app love-macos-${{ matrix.lua_version }}.zip
+        fi
     - name: Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: love-macos
-        path: love2d/love-macos.zip
+        name: love-macos-${{ matrix.lua_version }}
+        path: love2d/love-macos-${{ matrix.lua_version }}.zip
 
   release:
     name: Create Release
@@ -291,32 +420,33 @@ jobs:
         mkdir -p release-files
         
         # Copy files from each artifact directory, using original artifact names
-        for dir in love-linux-*.AppImage love-windows-* love-macos; do
+        for dir in love-linux-*-*.AppImage love-windows-*-* love-macos-*; do
           if [ -d "$dir" ]; then
             echo "Processing directory: $dir"
             find "$dir" -type f \( -name "*.AppImage" -o -name "*.zip" -o -name "*.exe" \) | while read file; do
-              # Rename files to include version info
+              # Extract architecture and lua version from directory name
               basename_file=$(basename "$file")
-              case "$basename_file" in
-                *.AppImage)
-                  if [[ "$dir" == *"X64"* ]]; then
-                    cp "$file" "release-files/love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-x64.AppImage"
-                  elif [[ "$dir" == *"ARM64"* ]]; then
-                    cp "$file" "release-files/love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-arm64.AppImage"
+              case "$dir" in
+                *linux-*-*)
+                  if [[ "$dir" =~ linux-([^-]+)-([^.]+) ]]; then
+                    arch="${BASH_REMATCH[1]}"
+                    lua_ver="${BASH_REMATCH[2]}"
+                    cp "$file" "release-files/love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-${arch}-${lua_ver}.AppImage"
                   fi
                   ;;
-                love-macos.zip)
-                  cp "$file" "release-files/love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-macos.zip"
-                  ;;
-                *.zip|*.exe)
-                  # Windows files - detect architecture from directory name
-                  if [[ "$dir" == *"x64"* ]]; then
-                    arch="x64"
-                  elif [[ "$dir" == *"arm64"* ]]; then
-                    arch="arm64"  
+                *windows-*-*)
+                  if [[ "$dir" =~ windows-([^-]+)-([^.]+) ]]; then
+                    arch="${BASH_REMATCH[1]}"
+                    lua_ver="${BASH_REMATCH[2]}"
+                    ext="${basename_file##*.}"
+                    cp "$file" "release-files/love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-${arch}-${lua_ver}.${ext}"
                   fi
-                  ext="${basename_file##*.}"
-                  cp "$file" "release-files/love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-${arch}.${ext}"
+                  ;;
+                *macos-*)
+                  if [[ "$dir" =~ macos-([^.]+) ]]; then
+                    lua_ver="${BASH_REMATCH[1]}"
+                    cp "$file" "release-files/love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-macos-${lua_ver}.zip"
+                  fi
                   ;;
               esac
             done
@@ -342,22 +472,30 @@ jobs:
           Repository: ${{ env.LOVE2D_REPO }}
           Branch: ${{ env.LOVE2D_BRANCH }}
 
-          **Downloads:**
-          - Linux x86_64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-X64.AppImage`
-          - Linux ARM64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-ARM64.AppImage`
-          - Windows x64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-x64.zip`
-          - Windows ARM64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-arm64.zip` (if available)
-          - macOS: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-macos.zip`
+          **Available builds:**
+          
+          **LuaJIT builds (JIT compilation enabled):**
+          - Linux x86_64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-X64-luajit.AppImage`
+          - Linux ARM64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-ARM64-luajit.AppImage`
+          - Windows x64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-x64-luajit.zip`
+          - Windows ARM64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-arm64-luajit.zip`
+          - macOS: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-macos-luajit.zip`
 
-          This build includes:
-          - Love2D Game Framework
-          - All required runtime libraries
-          - Cross-platform compatibility
+          **Lua 5.4 builds (standard Lua interpreter):**
+          - Linux x86_64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-X64-lua54.AppImage`
+          - Linux ARM64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-ARM64-lua54.AppImage`
+          - Windows x64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-x64-lua54.zip`
+          - Windows ARM64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-arm64-lua54.zip`
+          - macOS: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-macos-lua54.zip`
+
+          **Build differences:**
+          - **LuaJIT**: Better performance, JIT compilation, compatible with existing Love2D games
+          - **Lua 5.4**: Latest Lua features, better debugging support, more standard Lua compatibility
 
           **Note:** 
           - Linux builds are provided as AppImage (make executable and run)
-          - Windows builds include both x64 and ARM64 architectures (ARM64 may not always be available)
-          - macOS build is a universal app bundle
+          - Windows ARM64 builds may not always be available
+          - Choose LuaJIT for performance, Lua 5.4 for latest language features
         draft: false
         prerelease: false
       env:
