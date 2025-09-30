@@ -189,7 +189,7 @@ jobs:
         git clone --recursive ${{ env.LOVE2D_REPO }} megasource/libs/love
         cd megasource/libs/love
         git checkout ${{ env.LOVE2D_BRANCH }}
-    - name: Download and Setup Lua 5.4
+    - name: Setup Lua 5.4 in Megasource
       if: matrix.lua-engine == 'lua54'
       shell: cmd
       run: |
@@ -198,88 +198,84 @@ jobs:
         if errorlevel 1 exit /b 1
         
         rem Extract Lua source
-        mkdir lua54-temp
-        cd lua54-temp
-        tar -xzf ..\lua-${{ env.LUA54_VERSION }}.tar.gz
-        if errorlevel 1 exit /b 1
-        cd ..
-        
-        rem Backup LuaJIT directory and replace with Lua 5.4
-        move megasource\libs\LuaJIT megasource\libs\LuaJIT-backup
-        mkdir megasource\libs\LuaJIT
-        
-        rem Copy Lua source files
-        xcopy /E /I /Y lua54-temp\lua-${{ env.LUA54_VERSION }}\src\*.c megasource\libs\LuaJIT\src\
-        xcopy /E /I /Y lua54-temp\lua-${{ env.LUA54_VERSION }}\src\*.h megasource\libs\LuaJIT\src\
+        tar -xzf lua-${{ env.LUA54_VERSION }}.tar.gz
         if errorlevel 1 exit /b 1
         
-        rem Create CMakeLists.txt for Lua 5.4 that mimics LuaJIT structure
+        rem Create lua51 directory in megasource (megasource expects lua51 target)
+        mkdir megasource\libs\lua51
+        
+        rem Copy Lua 5.4 source files
+        xcopy /E /I /Y lua-${{ env.LUA54_VERSION }}\src\*.* megasource\libs\lua51\
+        if errorlevel 1 exit /b 1
+        
+        rem Create CMakeLists.txt for Lua 5.4 that creates lua51 target
         (
-        echo cmake_minimum_required(VERSION 3.1^)
-        echo project(lua C^)
+        echo cmake_minimum_required^(VERSION 3.1^)
+        echo project^(lua51 C^)
         echo.
         echo # Lua 5.4 core source files
-        echo set(LUA_CORE_SRC
-        echo     src/lapi.c src/lcode.c src/lctype.c src/ldebug.c src/ldo.c src/ldump.c
-        echo     src/lfunc.c src/lgc.c src/llex.c src/lmem.c src/lobject.c src/lopcodes.c
-        echo     src/lparser.c src/lstate.c src/lstring.c src/ltable.c src/ltm.c
-        echo     src/lundump.c src/lvm.c src/lzio.c
+        echo set^(LUA_CORE_SRC
+        echo     lapi.c lcode.c lctype.c ldebug.c ldo.c ldump.c lfunc.c lgc.c
+        echo     llex.c lmem.c lobject.c lopcodes.c lparser.c lstate.c lstring.c
+        echo     ltable.c ltm.c lundump.c lvm.c lzio.c
         echo ^)
         echo.
         echo # Lua 5.4 library source files
-        echo set(LUA_LIB_SRC
-        echo     src/lauxlib.c src/lbaselib.c src/lcorolib.c src/ldblib.c src/liolib.c
-        echo     src/lmathlib.c src/loadlib.c src/loslib.c src/lstrlib.c src/ltablib.c
-        echo     src/lutf8lib.c src/linit.c
+        echo set^(LUA_LIB_SRC
+        echo     lauxlib.c lbaselib.c lcorolib.c ldblib.c liolib.c lmathlib.c
+        echo     loadlib.c loslib.c lstrlib.c ltablib.c lutf8lib.c linit.c
         echo ^)
         echo.
-        echo # Create lua51 target to match LuaJIT naming
-        echo add_library(lua51 SHARED ${LUA_CORE_SRC} ${LUA_LIB_SRC}^)
+        echo # Create shared library named lua51 for compatibility
+        echo add_library^(lua51 SHARED ${LUA_CORE_SRC} ${LUA_LIB_SRC}^)
         echo.
-        echo # Set output name to lua51 to maintain compatibility
-        echo set_target_properties(lua51 PROPERTIES
+        echo # Set output name to lua51
+        echo set_target_properties^(lua51 PROPERTIES
         echo     OUTPUT_NAME "lua51"
         echo     PREFIX ""
+        echo     VERSION "5.4.7"
+        echo     SOVERSION "5.4"
         echo ^)
         echo.
-        echo # Define necessary macros for Windows DLL
-        echo if(WIN32^)
-        echo     target_compile_definitions(lua51 PRIVATE LUA_BUILD_AS_DLL^)
-        echo endif(^)
+        echo # Windows DLL export definitions
+        echo if^(WIN32^)
+        echo     target_compile_definitions^(lua51 PRIVATE LUA_BUILD_AS_DLL^)
+        echo endif^(^)
         echo.
-        echo # Set include directories
-        echo target_include_directories(lua51 PUBLIC 
-        echo     $^<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src^>
+        echo # Include directories
+        echo target_include_directories^(lua51 PUBLIC
+        echo     $^<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}^>
         echo     $^<INSTALL_INTERFACE:include^>
         echo ^)
         echo.
-        echo # Link with math library on Unix
-        echo if(UNIX^)
-        echo     target_link_libraries(lua51 m^)
-        echo endif(^)
+        echo # Link math library on Unix
+        echo if^(UNIX^)
+        echo     target_link_libraries^(lua51 m^)
+        echo endif^(^)
+        echo.
+        echo # Export variables for megasource
+        echo set^(MEGA_LUA51 lua51 PARENT_SCOPE^)
+        echo set^(MEGA_LUA51_DLL $^<TARGET_FILE:lua51^> PARENT_SCOPE^)
         echo.
         echo # Install targets
-        echo install(TARGETS lua51
+        echo install^(TARGETS lua51
         echo     ARCHIVE DESTINATION lib
         echo     LIBRARY DESTINATION lib
         echo     RUNTIME DESTINATION bin
         echo ^)
         echo.
-        echo # Install headers
-        echo install(FILES
-        echo     src/lua.h src/lualib.h src/lauxlib.h src/luaconf.h
+        echo install^(FILES
+        echo     lua.h lualib.h lauxlib.h luaconf.h
         echo     DESTINATION include
         echo ^)
-        ) > megasource\libs\LuaJIT\CMakeLists.txt
+        ) > megasource\libs\lua51\CMakeLists.txt
         
-        rem Create dummy buildvm_arch.h for compatibility
-        (
-        echo /* Dummy file for Lua 5.4 compatibility */
-        echo #define LJ_ARCH_NAME "lua54"
-        echo #define LJ_ARCH_BITS 64
-        echo #define LJ_TARGET_X64 1
-        echo #define LJ_TARGET_WINDOWS 1
-        ) > megasource\libs\LuaJIT\src\buildvm_arch.h
+        rem Modify megasource CMakeLists.txt to add lua51 subdirectory
+        echo. >> megasource\CMakeLists.txt
+        echo # Lua 5.4 support >> megasource\CMakeLists.txt
+        echo if^(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/libs/lua51"^) >> megasource\CMakeLists.txt
+        echo     add_subdirectory^(libs/lua51^) >> megasource\CMakeLists.txt
+        echo endif^(^) >> megasource\CMakeLists.txt
     - name: Download ANGLE
       uses: robinraju/release-downloader@v1.9
       if: steps.vars.outputs.angle == '1'
@@ -303,7 +299,12 @@ jobs:
         CFLAGS: /Zi
         CXXFLAGS: /Zi
         LDFLAGS: /DEBUG:FULL /OPT:REF /OPT:ICF
-      run: cmake -Bbuild -Smegasource -T v143 -A ${{ matrix.platform }},version=10.0.26100.0 --install-prefix %CD%\install -DCMAKE_PDB_OUTPUT_DIRECTORY=%CD%\pdb ${{ steps.vars.outputs.moredef }}
+      run: |
+        if "${{ matrix.lua-engine }}" == "lua54" (
+          cmake -Bbuild -Smegasource -T v143 -A ${{ matrix.platform }},version=10.0.26100.0 --install-prefix %CD%\install -DCMAKE_PDB_OUTPUT_DIRECTORY=%CD%\pdb -DLOVE_JIT=OFF ${{ steps.vars.outputs.moredef }}
+        ) else (
+          cmake -Bbuild -Smegasource -T v143 -A ${{ matrix.platform }},version=10.0.26100.0 --install-prefix %CD%\install -DCMAKE_PDB_OUTPUT_DIRECTORY=%CD%\pdb ${{ steps.vars.outputs.moredef }}
+        )
     - name: Install
       run: cmake --build build --target PACKAGE --config Release -j2
     - name: Copy Lua PDB
@@ -311,7 +312,7 @@ jobs:
         if "${{ matrix.lua-engine }}" == "luajit" (
           copy /Y build\libs\LuaJIT\src\lua51.pdb pdb\Release\lua51.pdb
         ) else (
-          copy /Y build\libs\LuaJIT\lua51.pdb pdb\Release\lua51.pdb
+          copy /Y build\libs\lua51\lua51.pdb pdb\Release\lua51.pdb
         )
         exit /b 0
     - name: Add srcsrv to PATH
@@ -482,11 +483,11 @@ jobs:
           **Note:** 
           - Linux builds are provided as AppImage (make executable and run)
           - Windows builds include both LuaJIT and Lua 5.4 versions
-          - Windows Lua 5.4 builds use lua51.dll filename for compatibility
+          - Windows Lua 5.4 builds use lua51.dll filename for compatibility (actual Lua 5.4 inside)
           - Windows builds include both x64 and ARM64 architectures (ARM64 may not always be available)
           - macOS build is a universal app bundle
           - LuaJIT offers better performance with JIT compilation
-          - Lua 5.4 provides latest language features (actual Lua 5.4, not LuaJIT)
+          - Lua 5.4 provides latest language features and better ARM64 compatibility
         draft: false
         prerelease: false
       env:
