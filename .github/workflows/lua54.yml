@@ -218,64 +218,53 @@ jobs:
             if os.path.isfile(s):
                 shutil.copy2(s, d)
         
-        # Create CMakeLists.txt that builds lua51 target (for Love2D compatibility)
-        cmake_content = """cmake_minimum_required(VERSION 3.1)
-project(lua51 C)
-
-# Lua 5.4 core source files
-set(LUA_CORE_SRC
-    lapi.c lcode.c lctype.c ldebug.c ldo.c ldump.c lfunc.c lgc.c
-    llex.c lmem.c lobject.c lopcodes.c lparser.c lstate.c lstring.c
-    ltable.c ltm.c lundump.c lvm.c lzio.c
-)
-
-# Lua 5.4 library source files
-set(LUA_LIB_SRC
-    lauxlib.c lbaselib.c lcorolib.c ldblib.c liolib.c lmathlib.c
-    loadlib.c loslib.c lstrlib.c ltablib.c lutf8lib.c linit.c
-)
-
-# Create shared library named lua51 for Love2D compatibility
-add_library(lua51 SHARED ${LUA_CORE_SRC} ${LUA_LIB_SRC})
-
-# Force output name to lua51
-set_target_properties(lua51 PROPERTIES
-    OUTPUT_NAME "lua51"
-    PREFIX ""
-)
-
-# Windows DLL export
-if(WIN32)
-    target_compile_definitions(lua51 PRIVATE LUA_BUILD_AS_DLL)
-endif()
-
-# Public include directories  
-target_include_directories(lua51 PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-    $<INSTALL_INTERFACE:include>
-)
-
-# Link math library on Unix
-if(UNIX)
-    target_link_libraries(lua51 m)
-endif()
-
-# Install targets
-install(TARGETS lua51
-    ARCHIVE DESTINATION lib
-    LIBRARY DESTINATION lib
-    RUNTIME DESTINATION bin
-)
-
-install(FILES lua.h lualib.h lauxlib.h luaconf.h
-    DESTINATION include
-)
-"""
-        
+        # Create CMakeLists.txt by writing line by line
         cmake_path = os.path.join(lua_dest, "CMakeLists.txt")
         print(f"Creating {cmake_path}")
+        
         with open(cmake_path, 'w') as f:
-            f.write(cmake_content)
+            f.write("cmake_minimum_required(VERSION 3.1)\n")
+            f.write("project(lua51 C)\n\n")
+            f.write("# Lua 5.4 core source files\n")
+            f.write("set(LUA_CORE_SRC\n")
+            f.write("    lapi.c lcode.c lctype.c ldebug.c ldo.c ldump.c lfunc.c lgc.c\n")
+            f.write("    llex.c lmem.c lobject.c lopcodes.c lparser.c lstate.c lstring.c\n")
+            f.write("    ltable.c ltm.c lundump.c lvm.c lzio.c\n")
+            f.write(")\n\n")
+            f.write("# Lua 5.4 library source files\n")
+            f.write("set(LUA_LIB_SRC\n")
+            f.write("    lauxlib.c lbaselib.c lcorolib.c ldblib.c liolib.c lmathlib.c\n")
+            f.write("    loadlib.c loslib.c lstrlib.c ltablib.c lutf8lib.c linit.c\n")
+            f.write(")\n\n")
+            f.write("# Create shared library named lua51 for Love2D compatibility\n")
+            f.write("add_library(lua51 SHARED ${LUA_CORE_SRC} ${LUA_LIB_SRC})\n\n")
+            f.write("# Force output name to lua51\n")
+            f.write("set_target_properties(lua51 PROPERTIES\n")
+            f.write("    OUTPUT_NAME \"lua51\"\n")
+            f.write("    PREFIX \"\"\n")
+            f.write(")\n\n")
+            f.write("# Windows DLL export\n")
+            f.write("if(WIN32)\n")
+            f.write("    target_compile_definitions(lua51 PRIVATE LUA_BUILD_AS_DLL)\n")
+            f.write("endif()\n\n")
+            f.write("# Public include directories\n")
+            f.write("target_include_directories(lua51 PUBLIC\n")
+            f.write("    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>\n")
+            f.write("    $<INSTALL_INTERFACE:include>\n")
+            f.write(")\n\n")
+            f.write("# Link math library on Unix\n")
+            f.write("if(UNIX)\n")
+            f.write("    target_link_libraries(lua51 m)\n")
+            f.write("endif()\n\n")
+            f.write("# Install targets\n")
+            f.write("install(TARGETS lua51\n")
+            f.write("    ARCHIVE DESTINATION lib\n")
+            f.write("    LIBRARY DESTINATION lib\n")
+            f.write("    RUNTIME DESTINATION bin\n")
+            f.write(")\n\n")
+            f.write("install(FILES lua.h lualib.h lauxlib.h luaconf.h\n")
+            f.write("    DESTINATION include\n")
+            f.write(")\n")
         
         # Patch megasource CMakeLists.txt to change version
         megasource_cmake = "megasource/CMakeLists.txt"
