@@ -72,7 +72,7 @@ jobs:
       with:
         repository: love2d/love-appimage-source
         ref: main
-    - name: Checkout LÃ–VE
+    - name: Checkout LÖVE
       run: |
         git clone --recursive ${{ env.LOVE2D_REPO }} love2d-${{ needs.version.outputs.commit_hash }}
         cd love2d-${{ needs.version.outputs.commit_hash }}
@@ -103,6 +103,7 @@ jobs:
     strategy:
       matrix:
         platform: [x64, ARM64]
+        lua-engine: [luajit, lua54]
     defaults:
       run:
         shell: cmd
@@ -113,9 +114,20 @@ jobs:
       run: |
         rem JIT Modules
         if "${{ matrix.platform }}" == "x64" (
-          (echo jitmodules=1)>> "%GITHUB_OUTPUT%"
+          if "${{ matrix.lua-engine }}" == "luajit" (
+            (echo jitmodules=1)>> "%GITHUB_OUTPUT%"
+          ) else (
+            (echo jitmodules=0)>> "%GITHUB_OUTPUT%"
+          )
         ) else (
           (echo jitmodules=0)>> "%GITHUB_OUTPUT%"
+        )
+        
+        rem Lua Engine Suffix
+        if "${{ matrix.lua-engine }}" == "lua54" (
+          (echo lua_suffix=-lua54)>> "%GITHUB_OUTPUT%"
+        ) else (
+          (echo lua_suffix=)>> "%GITHUB_OUTPUT%"
         )
         
         rem Architecture-Specific Switch
@@ -177,6 +189,63 @@ jobs:
         git clone --recursive ${{ env.LOVE2D_REPO }} megasource/libs/love
         cd megasource/libs/love
         git checkout ${{ env.LOVE2D_BRANCH }}
+    - name: Download and Setup Lua 5.4
+      if: matrix.lua-engine == 'lua54'
+      shell: cmd
+      run: |
+        rem Download Lua 5.4 source
+        curl -Lfo lua-${{ env.LUA54_VERSION }}.tar.gz https://www.lua.org/ftp/lua-${{ env.LUA54_VERSION }}.tar.gz
+        if errorlevel 1 exit /b 1
+        
+        rem Extract Lua source
+        mkdir lua54-temp
+        cd lua54-temp
+        tar -xzf ..\lua-${{ env.LUA54_VERSION }}.tar.gz
+        if errorlevel 1 exit /b 1
+        
+        rem Create lua directory in megasource if it doesn't exist
+        if not exist ..\megasource\libs\lua mkdir ..\megasource\libs\lua
+        
+        rem Copy Lua source files to megasource
+        xcopy /E /I /Y lua-${{ env.LUA54_VERSION }}\src\*.* ..\megasource\libs\lua\
+        if errorlevel 1 exit /b 1
+        
+        cd ..
+        
+        rem Create CMakeLists.txt for Lua 5.4
+        (
+        echo cmake_minimum_required(VERSION 3.1^)
+        echo project(lua C^)
+        echo.
+        echo # Lua 5.4 source files
+        echo set(LUA_CORE_SRC
+        echo     lapi.c lcode.c lctype.c ldebug.c ldo.c ldump.c lfunc.c lgc.c llex.c
+        echo     lmem.c lobject.c lopcodes.c lparser.c lstate.c lstring.c ltable.c
+        echo     ltm.c lundump.c lvm.c lzio.c
+        echo ^)
+        echo.
+        echo set(LUA_LIB_SRC
+        echo     lauxlib.c lbaselib.c lcorolib.c ldblib.c liolib.c lmathlib.c
+        echo     loadlib.c loslib.c lstrlib.c ltablib.c lutf8lib.c linit.c
+        echo ^)
+        echo.
+        echo add_library(lua STATIC ${LUA_CORE_SRC} ${LUA_LIB_SRC}^)
+        echo.
+        echo # Define LUA_BUILD_AS_DLL for Windows
+        echo if(WIN32^)
+        echo     target_compile_definitions(lua PRIVATE LUA_BUILD_AS_DLL^)
+        echo endif(^)
+        echo.
+        echo # Set include directories
+        echo target_include_directories(lua PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}^)
+        echo.
+        echo # Install targets
+        echo install(TARGETS lua
+        echo     ARCHIVE DESTINATION lib
+        echo     LIBRARY DESTINATION lib
+        echo     RUNTIME DESTINATION bin
+        echo ^)
+        ) > megasource\libs\lua\CMakeLists.txt
     - name: Download ANGLE
       uses: robinraju/release-downloader@v1.9
       if: steps.vars.outputs.angle == '1'
@@ -191,104 +260,55 @@ jobs:
       if: steps.vars.outputs.angle == '1'
       working-directory: angle
       run: 7z x angle-win-${{ steps.vars.outputs.arch }}.zip
-    - name: Download Lua 5.4 Source
-      run: |
-        curl -Lfo lua-${{ env.LUA54_VERSION }}.tar.gz https://www.lua.org/ftp/lua-${{ env.LUA54_VERSION }}.tar.gz
-        7z x lua-${{ env.LUA54_VERSION }}.tar.gz
-        7z x lua-${{ env.LUA54_VERSION }}.tar
-    - name: Create Lua 5.4 Build Files
-      shell: python
-      run: |
-        import os
-        
-        # Create CMakeLists.txt for Lua 5.4
-        cmake_content = """cmake_minimum_required(VERSION 3.15)
-        project(lua54 C)
-        
-        set(LUA_LIB_SRCS
-            lapi.c lcode.c lctype.c ldebug.c ldo.c ldump.c lfunc.c lgc.c llex.c
-            lmem.c lobject.c lopcodes.c lparser.c lstate.c lstring.c ltable.c
-            ltm.c lundump.c lvm.c lzio.c
-            lauxlib.c lbaselib.c lcorolib.c ldblib.c liolib.c lmathlib.c
-            loadlib.c loslib.c lstrlib.c ltablib.c lutf8lib.c linit.c
-        )
-        
-        # Build as shared library (DLL)
-        add_library(lua54 SHARED ${LUA_LIB_SRCS})
-        target_compile_definitions(lua54 PRIVATE LUA_BUILD_AS_DLL)
-        set_target_properties(lua54 PROPERTIES 
-            OUTPUT_NAME "lua54"
-            PREFIX ""
-            DEBUG_POSTFIX ""
-        )
-        
-        # Generate PDB files for debugging
-        if(MSVC)
-            target_compile_options(lua54 PRIVATE /Zi)
-            target_link_options(lua54 PRIVATE /DEBUG:FULL /OPT:REF /OPT:ICF)
-            set_target_properties(lua54 PROPERTIES 
-                COMPILE_PDB_NAME "lua54"
-                COMPILE_PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/pdb"
-            )
-        endif()
-        
-        # Install targets
-        install(TARGETS lua54
-            RUNTIME DESTINATION bin
-            LIBRARY DESTINATION lib
-            ARCHIVE DESTINATION lib
-        )
-        
-        install(FILES 
-            lua.h luaconf.h lualib.h lauxlib.h lua.hpp
-            DESTINATION include
-        )
-        """
-        
-        with open(f"lua-{os.environ['LUA54_VERSION']}/src/CMakeLists.txt", "w") as f:
-            f.write(cmake_content)
     - name: Remove Strawberry Perl From Path
       run: |
         move /y C:\Strawberry C:\Strawberry_not_in_PATH
-        exit /b 0
-    - name: Configure Lua 5.4
-      working-directory: lua-${{ env.LUA54_VERSION }}/src
-      run: cmake -Bbuild -S. -T v143 -A ${{ matrix.platform }},version=10.0.26100.0 -DCMAKE_INSTALL_PREFIX=%CD%\..\..\lua54-install
-    - name: Build Lua 5.4
-      working-directory: lua-${{ env.LUA54_VERSION }}/src
-      run: cmake --build build --config Release --target install
-    - name: Create Lua 5.4 PDB Directory
-      run: |
-        mkdir lua54-pdb
-        copy /Y lua-${{ env.LUA54_VERSION }}\src\build\Release\lua54.pdb lua54-pdb\
-        copy /Y lua-${{ env.LUA54_VERSION }}\src\build\pdb\lua54.pdb lua54-pdb\ 2>nul
         exit /b 0
     - name: Configure
       env:
         CFLAGS: /Zi
         CXXFLAGS: /Zi
         LDFLAGS: /DEBUG:FULL /OPT:REF /OPT:ICF
-      run: cmake -Bbuild -Smegasource -T v143 -A ${{ matrix.platform }},version=10.0.26100.0 --install-prefix %CD%\install -DCMAKE_PDB_OUTPUT_DIRECTORY=%CD%\pdb ${{ steps.vars.outputs.moredef }}
+      run: |
+        if "${{ matrix.lua-engine }}" == "lua54" (
+          cmake -Bbuild -Smegasource -T v143 -A ${{ matrix.platform }},version=10.0.26100.0 --install-prefix %CD%\install -DCMAKE_PDB_OUTPUT_DIRECTORY=%CD%\pdb -DMEGASOURCE_USE_LUA=ON -DMEGASOURCE_USE_LUAJIT=OFF ${{ steps.vars.outputs.moredef }}
+        ) else (
+          cmake -Bbuild -Smegasource -T v143 -A ${{ matrix.platform }},version=10.0.26100.0 --install-prefix %CD%\install -DCMAKE_PDB_OUTPUT_DIRECTORY=%CD%\pdb ${{ steps.vars.outputs.moredef }}
+        )
     - name: Install
       run: cmake --build build --target PACKAGE --config Release -j2
     - name: Copy LuaJIT lua51.pdb
+      if: matrix.lua-engine == 'luajit'
       run: |
         copy /Y build\libs\LuaJIT\src\lua51.pdb pdb\Release\lua51.pdb
         exit /b 0
+    - name: Copy Lua 5.4 pdb
+      if: matrix.lua-engine == 'lua54'
+      run: |
+        copy /Y build\libs\lua\lua.pdb pdb\Release\lua.pdb
+        exit /b 0
     - name: Add srcsrv to PATH
       run: |
-        echo C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\srcsrv>>%GITHUB_PATH%
-    - name: Embed Source Index into PDBs
+        echo C:\Program Files (x86^)\Windows Kits\10\Debuggers\x64\srcsrv>>%GITHUB_PATH%
+    - name: Embed Source Index into PDBs (LuaJIT)
+      if: matrix.lua-engine == 'luajit'
       run: |
         python source_index.py ^
         --source %CD%\megasource\libs\love https://raw.githubusercontent.com/love2d/love/${{ needs.version.outputs.commit_hash }} ^
         --source %CD%\megasource https://raw.githubusercontent.com/love2d/megasource/${{ steps.megasource.outputs.commit }} ^
         --source %CD%\build\libs\LuaJIT https://raw.githubusercontent.com/love2d/megasource/${{ steps.megasource.outputs.commit }}/libs/LuaJIT ^
         pdb\Release\*.pdb
+    - name: Embed Source Index into PDBs (Lua 5.4)
+      if: matrix.lua-engine == 'lua54'
+      run: |
+        python source_index.py ^
+        --source %CD%\megasource\libs\love https://raw.githubusercontent.com/love2d/love/${{ needs.version.outputs.commit_hash }} ^
+        --source %CD%\megasource https://raw.githubusercontent.com/love2d/megasource/${{ steps.megasource.outputs.commit }} ^
+        pdb\Release\*.pdb
     - name: Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: love-windows-${{ steps.vars.outputs.arch }}
+        name: love-windows-${{ steps.vars.outputs.arch }}${{ steps.vars.outputs.lua_suffix }}
         path: |
           build/*.zip
           build/*.exe
@@ -302,22 +322,8 @@ jobs:
     - name: Artifact PDB
       uses: actions/upload-artifact@v4
       with:
-        name: love-windows-${{ steps.vars.outputs.arch }}-dbg
+        name: love-windows-${{ steps.vars.outputs.arch }}${{ steps.vars.outputs.lua_suffix }}-dbg
         path: pdb/Release/*.pdb
-    - name: Artifact Lua 5.4
-      uses: actions/upload-artifact@v4
-      with:
-        name: lua54-windows-${{ steps.vars.outputs.arch }}
-        path: |
-          lua54-install/bin/*.dll
-          lua54-install/lib/*.lib
-          lua54-install/include/*.h
-          lua54-install/include/*.hpp
-    - name: Artifact Lua 5.4 PDB
-      uses: actions/upload-artifact@v4
-      with:
-        name: lua54-windows-${{ steps.vars.outputs.arch }}-dbg
-        path: lua54-pdb/*.pdb
 
   macOS:
     runs-on: macos-latest
@@ -374,10 +380,10 @@ jobs:
         mkdir -p release-files
         
         # Copy files from each artifact directory, using original artifact names
-        for dir in love-linux-*.AppImage love-windows-* love-macos lua54-windows-*; do
+        for dir in love-linux-*.AppImage love-windows-* love-macos; do
           if [ -d "$dir" ]; then
             echo "Processing directory: $dir"
-            find "$dir" -type f \( -name "*.AppImage" -o -name "*.zip" -o -name "*.exe" -o -name "*.dll" -o -name "*.lib" -o -name "*.h" -o -name "*.hpp" \) | while read file; do
+            find "$dir" -type f \( -name "*.AppImage" -o -name "*.zip" -o -name "*.exe" \) | while read file; do
               # Rename files to include version info
               basename_file=$(basename "$file")
               case "$basename_file" in
@@ -392,26 +398,23 @@ jobs:
                   cp "$file" "release-files/love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-macos.zip"
                   ;;
                 *.zip|*.exe)
-                  # Windows files - detect architecture from directory name
+                  # Windows files - detect architecture and lua engine from directory name
                   if [[ "$dir" == *"x64"* ]]; then
                     arch="x64"
                   elif [[ "$dir" == *"arm64"* ]]; then
                     arch="arm64"  
                   fi
+                  
+                  lua_suffix=""
+                  if [[ "$dir" == *"lua54"* ]]; then
+                    lua_suffix="-lua54"
+                  fi
+                  
                   ext="${basename_file##*.}"
-                  cp "$file" "release-files/love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-${arch}.${ext}"
+                  cp "$file" "release-files/love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-${arch}${lua_suffix}.${ext}"
                   ;;
               esac
             done
-          fi
-        done
-        
-        # Create Lua 5.4 archives
-        for arch in x64 arm64; do
-          if [ -d "lua54-windows-${arch}" ]; then
-            cd "lua54-windows-${arch}"
-            zip -r "../release-files/lua54-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-${arch}.zip" .
-            cd ..
           fi
         done
         
@@ -437,23 +440,25 @@ jobs:
           **Downloads:**
           - Linux x86_64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-X64.AppImage`
           - Linux ARM64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-linux-ARM64.AppImage`
-          - Windows x64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-x64.zip`
-          - Windows ARM64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-arm64.zip` (if available)
+          - Windows x64 (LuaJIT): `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-x64.zip`
+          - Windows x64 (Lua 5.4): `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-x64-lua54.zip`
+          - Windows ARM64 (LuaJIT): `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-arm64.zip` (if available)
+          - Windows ARM64 (Lua 5.4): `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-arm64-lua54.zip` (if available)
           - macOS: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-macos.zip`
-          - Lua 5.4 Windows x64: `lua54-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-x64.zip`
-          - Lua 5.4 Windows ARM64: `lua54-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-arm64.zip` (if available)
 
           This build includes:
           - Love2D Game Framework
           - All required runtime libraries
           - Cross-platform compatibility
-          - Lua 5.4 runtime libraries for Windows (DLL, LIB, and headers)
+          - Multiple Lua engine options (LuaJIT and Lua 5.4 for Windows)
 
           **Note:** 
           - Linux builds are provided as AppImage (make executable and run)
+          - Windows builds include both LuaJIT and Lua 5.4 versions
           - Windows builds include both x64 and ARM64 architectures (ARM64 may not always be available)
           - macOS build is a universal app bundle
-          - Lua 5.4 builds are provided separately as DLL/LIB packages for Windows
+          - LuaJIT offers better performance with JIT compilation
+          - Lua 5.4 provides latest language features and better compatibility
         draft: false
         prerelease: false
       env:
