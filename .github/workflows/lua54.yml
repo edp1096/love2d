@@ -141,7 +141,7 @@ jobs:
                     needs_patch = False
         
         if not needs_patch:
-            print("✓ No patching needed - Love2D main branch already supports Lua 5.4")
+            print("[OK] No patching needed - Love2D main branch already supports Lua 5.4")
         else:
             print("Applying Lua 5.4 compatibility patches for older Love2D version...")
             
@@ -156,7 +156,7 @@ jobs:
                     luaconf = '#define LUA_COMPAT_APIINTCASTS 1\n' + luaconf
                     with open(luaconf_path, 'w', encoding='utf-8') as f:
                         f.write(luaconf)
-                    print(f"✓ Added LUA_COMPAT_APIINTCASTS to {luaconf_path}")
+                    print(f"[OK] Added LUA_COMPAT_APIINTCASTS to {luaconf_path}")
             
             # Method 2: Patch wrap_*.cpp files as backup
             pattern = "megasource/libs/love/src/modules/**/wrap_*.cpp"
@@ -182,7 +182,7 @@ jobs:
                     patched_count += 1
             
             if patched_count > 0:
-                print(f"✓ Patched {patched_count} files for Lua 5.4 compatibility")
+                print(f"[OK] Patched {patched_count} files for Lua 5.4 compatibility")
         
         print("\nLua 5.4 compatibility check complete")
         
