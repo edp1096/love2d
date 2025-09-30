@@ -124,29 +124,73 @@ jobs:
       shell: python
       run: |
         import os
+        import re
         
         # Patch wrap_Event.cpp - replace lua_cpcall with lua_pcall
         wrap_event = "megasource/libs/love/src/modules/event/wrap_Event.cpp"
         print(f"[1/1] Patching {wrap_event} for Lua 5.4...")
         
+        if not os.path.exists(wrap_event):
+            print(f"[ERROR] File not found: {wrap_event}")
+            import sys
+            sys.exit(1)
+        
         with open(wrap_event, 'r', encoding='utf-8') as f:
             content = f.read()
         
-        # Replace lua_cpcall with lua_pushcfunction + lua_pcall pattern
-        # Original: lua_cpcall(L, w_poll_i, &le)
-        if 'lua_cpcall' in content:
-            # Find and replace the lua_cpcall usage
-            content = content.replace(
-                'lua_cpcall(L, w_poll_i, &le)',
-                'lua_pushcfunction(L, w_poll_i); lua_pushlightuserdata(L, &le); lua_pcall(L, 1, 0, 0)'
-            )
-            
-            with open(wrap_event, 'w', encoding='utf-8') as f:
-                f.write(content)
-            
-            print("[OK] Patched lua_cpcall -> lua_pcall")
+        # Debug: Show file size
+        print(f"[DEBUG] File size: {len(content)} bytes")
+        
+        # Check if lua_cpcall exists in the file
+        if 'lua_cpcall' not in content:
+            print("[INFO] No lua_cpcall found - file may already be Lua 5.4 compatible")
+            print("[SKIP] No patching needed")
         else:
-            print("[SKIP] No lua_cpcall found (already compatible)")
+            print("[DEBUG] Found lua_cpcall in file")
+            
+            # Count occurrences
+            count = content.count('lua_cpcall')
+            print(f"[DEBUG] Found {count} occurrence(s) of lua_cpcall")
+            
+            # Use regex for more flexible matching (handles whitespace variations)
+            # Pattern: lua_cpcall(L, w_poll_i, &le) with optional whitespace
+            pattern = r'lua_cpcall\s*\(\s*L\s*,\s*w_poll_i\s*,\s*&le\s*\)'
+            replacement = 'lua_pushcfunction(L, w_poll_i); lua_pushlightuserdata(L, &le); lua_pcall(L, 1, 0, 0)'
+            
+            # Apply patch
+            new_content, num_replacements = re.subn(pattern, replacement, content)
+            
+            if num_replacements == 0:
+                print("[ERROR] Pattern matching failed - no replacements made")
+                # Try to find the actual pattern
+                if 'lua_cpcall' in content:
+                    idx = content.find('lua_cpcall')
+                    context = content[max(0, idx-50):min(len(content), idx+100)]
+                    print(f"[DEBUG] Context around lua_cpcall:\n{context}")
+                import sys
+                sys.exit(1)
+            
+            # Write patched content
+            with open(wrap_event, 'w', encoding='utf-8') as f:
+                f.write(new_content)
+            
+            print(f"[OK] Patched {num_replacements} occurrence(s) of lua_cpcall -> lua_pcall")
+            
+            # Verify patch
+            with open(wrap_event, 'r', encoding='utf-8') as f:
+                verify_content = f.read()
+            
+            if 'lua_cpcall' in verify_content:
+                print("[ERROR] Verification failed - lua_cpcall still exists after patch!")
+                import sys
+                sys.exit(1)
+            
+            if 'lua_pushcfunction' not in verify_content:
+                print("[ERROR] Verification failed - lua_pushcfunction not found after patch!")
+                import sys
+                sys.exit(1)
+            
+            print("[VERIFIED] Patch successfully applied and verified")
 
     - name: Replace Lua 5.1.5 with Lua 5.4.8
       shell: python
