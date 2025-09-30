@@ -219,7 +219,7 @@ jobs:
                 shutil.copy2(s, d)
         
         # Create CMakeLists.txt that builds lua51 target (for Love2D compatibility)
-        cmake_content = '''cmake_minimum_required(VERSION 3.1)
+        cmake_content = """cmake_minimum_required(VERSION 3.1)
 project(lua51 C)
 
 # Lua 5.4 core source files
@@ -270,7 +270,7 @@ install(TARGETS lua51
 install(FILES lua.h lualib.h lauxlib.h luaconf.h
     DESTINATION include
 )
-'''
+"""
         
         cmake_path = os.path.join(lua_dest, "CMakeLists.txt")
         print(f"Creating {cmake_path}")
