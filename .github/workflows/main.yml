@@ -201,14 +201,14 @@ jobs:
         tar -xzf lua-${{ env.LUA54_VERSION }}.tar.gz
         if errorlevel 1 exit /b 1
         
-        rem Create lua51 directory in megasource (megasource expects lua51 target)
+        rem Create lua51 directory in megasource/libs
         mkdir megasource\libs\lua51
         
         rem Copy Lua 5.4 source files
         xcopy /E /I /Y lua-${{ env.LUA54_VERSION }}\src\*.* megasource\libs\lua51\
         if errorlevel 1 exit /b 1
         
-        rem Create CMakeLists.txt for Lua 5.4 that creates lua51 target
+        rem Create CMakeLists.txt for Lua 5.4 (outputs lua51.dll for compatibility)
         (
         echo cmake_minimum_required^(VERSION 3.1^)
         echo project^(lua51 C^)
@@ -226,15 +226,14 @@ jobs:
         echo     loadlib.c loslib.c lstrlib.c ltablib.c lutf8lib.c linit.c
         echo ^)
         echo.
-        echo # Create shared library named lua51 for compatibility
+        echo # Create shared library with lua51 name for Love2D compatibility
         echo add_library^(lua51 SHARED ${LUA_CORE_SRC} ${LUA_LIB_SRC}^)
         echo.
-        echo # Set output name to lua51
+        echo # Force output name to lua51 instead of lua54
         echo set_target_properties^(lua51 PROPERTIES
         echo     OUTPUT_NAME "lua51"
         echo     PREFIX ""
-        echo     VERSION "5.4.7"
-        echo     SOVERSION "5.4"
+        echo     RUNTIME_OUTPUT_NAME "lua51"
         echo ^)
         echo.
         echo # Windows DLL export definitions
@@ -253,9 +252,9 @@ jobs:
         echo     target_link_libraries^(lua51 m^)
         echo endif^(^)
         echo.
-        echo # Export variables for megasource
+        echo # Export variables for megasource - this is critical
         echo set^(MEGA_LUA51 lua51 PARENT_SCOPE^)
-        echo set^(MEGA_LUA51_DLL $^<TARGET_FILE:lua51^> PARENT_SCOPE^)
+        echo set^(MEGA_LUA51_DLL "$^<TARGET_FILE:lua51^>" PARENT_SCOPE^)
         echo.
         echo # Install targets
         echo install^(TARGETS lua51
@@ -270,12 +269,48 @@ jobs:
         echo ^)
         ) > megasource\libs\lua51\CMakeLists.txt
         
-        rem Modify megasource CMakeLists.txt to add lua51 subdirectory
+        rem Patch megasource CMakeLists.txt to include lua51
         echo. >> megasource\CMakeLists.txt
-        echo # Lua 5.4 support >> megasource\CMakeLists.txt
-        echo if^(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/libs/lua51"^) >> megasource\CMakeLists.txt
+        echo # Lua 5.4 support - add lua51 subdirectory >> megasource\CMakeLists.txt
+        echo if^(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/libs/lua51/CMakeLists.txt"^) >> megasource\CMakeLists.txt
+        echo     message^(STATUS "Building Lua 5.4 as lua51"^) >> megasource\CMakeLists.txt
         echo     add_subdirectory^(libs/lua51^) >> megasource\CMakeLists.txt
+        echo     # Set variables that Love2D expects >> megasource\CMakeLists.txt
+        echo     set^(MEGA_LUA51 lua51^) >> megasource\CMakeLists.txt
+        echo     set^(MEGA_LUA51_DLL "$^<TARGET_FILE:lua51^>"^) >> megasource\CMakeLists.txt
         echo endif^(^) >> megasource\CMakeLists.txt
+    - name: Patch Love2D CMakeLists.txt for Lua 5.4
+      if: matrix.lua-engine == 'lua54'
+      shell: python
+      run: |
+        import re
+        
+        # Read Love2D CMakeLists.txt
+        cmake_path = "megasource/libs/love/CMakeLists.txt"
+        with open(cmake_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        
+        # Find the section where MEGA_LUA51 is used and ensure DLL is properly handled
+        # Look for the else() block after if(LOVE_JIT)
+        pattern = r'(else\(\)\s*# MEGA_LUA51 is a CMake target.*?target_link_libraries\(lovedep::Lua INTERFACE \$\{MEGA_LUA51\}\))'
+        
+        def replace_lua51_section(match):
+            return match.group(1) + '''
+		# Add lua51.dll to move list for Lua 5.4
+		if(MEGA_LUA51_DLL)
+			set(LOVE_MOVE_DLLS
+				${LOVE_MOVE_DLLS}
+				${MEGA_LUA51_DLL}
+			)
+		endif()'''
+        
+        content = re.sub(pattern, replace_lua51_section, content, flags=re.DOTALL)
+        
+        # Write back
+        with open(cmake_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        
+        print("Patched Love2D CMakeLists.txt for Lua 5.4 support")
     - name: Download ANGLE
       uses: robinraju/release-downloader@v1.9
       if: steps.vars.outputs.angle == '1'
@@ -480,14 +515,15 @@ jobs:
           - Cross-platform compatibility
           - Multiple Lua engine options (LuaJIT and Lua 5.4 for Windows)
 
-          **Note:** 
+          **Important Notes:** 
           - Linux builds are provided as AppImage (make executable and run)
           - Windows builds include both LuaJIT and Lua 5.4 versions
-          - Windows Lua 5.4 builds use lua51.dll filename for compatibility (actual Lua 5.4 inside)
+          - **Windows Lua 5.4 builds use lua51.dll filename** (for Love2D compatibility) but contain actual Lua 5.4.7 inside
+          - Verify Lua version with `print(_VERSION)` in Love2D - should show "Lua 5.4"
           - Windows builds include both x64 and ARM64 architectures (ARM64 may not always be available)
           - macOS build is a universal app bundle
           - LuaJIT offers better performance with JIT compilation
-          - Lua 5.4 provides latest language features and better ARM64 compatibility
+          - Lua 5.4 provides latest language features and better compatibility with new Lua code
         draft: false
         prerelease: false
       env:
