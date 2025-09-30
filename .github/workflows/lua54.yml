@@ -310,7 +310,28 @@ jobs:
       run: cmake -Bbuild -Smegasource -T v143 -A ${{ matrix.platform }},version=10.0.26100.0 --install-prefix %CD%\install -DCMAKE_PDB_OUTPUT_DIRECTORY=%CD%\pdb -DLOVE_JIT=OFF ${{ steps.vars.outputs.moredef }}
       
     - name: Build
-      run: cmake --build build --target PACKAGE --config Release -j2
+      run: cmake --build build --config Release --target love -j2
+      
+    - name: Package manually
+      shell: cmd
+      run: |
+        rem Create package directory
+        mkdir package
+        
+        rem Copy love executable and DLLs
+        copy build\love\Release\love.exe package\
+        copy build\lua51\Release\lua51.dll package\
+        copy build\SDL3\Release\SDL3.dll package\
+        copy build\openal-soft\Release\OpenAL32.dll package\
+        
+        rem Copy license files if they exist
+        if exist megasource\libs\love\license.txt copy megasource\libs\love\license.txt package\
+        if exist megasource\libs\love\readme.md copy megasource\libs\love\readme.md package\
+        
+        rem Create zip file
+        cd package
+        7z a ..\love-lua54-${{ steps.vars.outputs.arch }}.zip *
+        cd ..
       
     - name: Copy Lua PDB
       run: |
@@ -332,9 +353,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: love-windows-${{ steps.vars.outputs.arch }}-lua54
-        path: |
-          build/*.zip
-          build/*.exe
+        path: love-lua54-${{ steps.vars.outputs.arch }}.zip
         if-no-files-found: ${{ steps.vars.outputs.nofiles }}
         
     - name: Artifact PDB
@@ -360,16 +379,14 @@ jobs:
         for dir in love-windows-*-lua54; do
           if [ -d "$dir" ]; then
             echo "Processing directory: $dir"
-            find "$dir" -type f \( -name "*.zip" -o -name "*.exe" \) | while read file; do
-              basename_file=$(basename "$file")
+            find "$dir" -type f -name "*.zip" | while read file; do
               if [[ "$dir" == *"x64"* ]]; then
                 arch="x64"
               elif [[ "$dir" == *"arm64"* ]]; then
                 arch="arm64"  
               fi
               
-              ext="${basename_file##*.}"
-              cp "$file" "release-files/love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-${arch}-lua54.${ext}"
+              cp "$file" "release-files/love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-${arch}-lua54.zip"
             done
           fi
         done
