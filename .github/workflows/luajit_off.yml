@@ -155,8 +155,8 @@ jobs:
             # Use regex to replace all lua_cpcall occurrences
             # Pattern: lua_cpcall(L, function_name, argument)
             # Capture groups: (function_name) and (argument)
-            pattern = r'lua_cpcall\s*\(\s*L\s*,\s*(\w+)\s*,\s*([^)]+)\s*\)'
-            replacement = r'lua_pushcfunction(L, \1); lua_pushlightuserdata(L, \2); lua_pcall(L, 1, 0, 0)'
+            pattern = r'int err = lua_cpcall\s*\(\s*L\s*,\s*(\w+)\s*,\s*([^)]+)\s*\)'
+            replacement = r'lua_pushcfunction(L, \1); lua_pushlightuserdata(L, \2); int err = lua_pcall(L, 1, 0, 0)'
             
             # Apply patch
             new_content, num_replacements = re.subn(pattern, replacement, content)
