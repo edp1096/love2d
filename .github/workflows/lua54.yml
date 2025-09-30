@@ -412,6 +412,14 @@ install(FILES lua.h lualib.h lauxlib.h luaconf.h
           - DLL Name: `lua51.dll` (for Love2D compatibility)
           - Actual Engine: Lua 5.4.8 (verify with `print(_VERSION)`)
 
+          **Features:**
+          - Latest Lua 5.4 language features
+          - to-be-closed variables (`<close>`)
+          - const variables
+          - Generational garbage collection
+          - Better compatibility with modern Lua libraries
+          - No JIT compilation (pure interpreter)
+
           **Performance Note:**
           This build uses Lua 5.4 interpreter without JIT compilation.
           For maximum performance, use the standard LuaJIT build.
