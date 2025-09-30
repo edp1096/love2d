@@ -1,16 +1,13 @@
-name: Build Love2D with Lua 5.4.8
+name: Build Love2D
 
 on:
   push:
     branches: [ main, master ]
-    paths:
-      - '.github/workflows/lua54.yml'
   workflow_dispatch:
 
 env:
   LOVE2D_REPO: "https://github.com/love2d/love.git"
   LOVE2D_BRANCH: "main"
-  LUA_VERSION: "5.4.8"
 
 permissions:
   contents: write
@@ -37,7 +34,7 @@ jobs:
         echo "commit_hash=$COMMIT_HASH" >> $GITHUB_OUTPUT
         rm -rf love2d-temp
 
-  Windows-Lua54:
+  Windows:
     runs-on: windows-2025
     needs: version
     env: 
@@ -122,123 +119,6 @@ jobs:
         cd megasource/libs/love
         git checkout ${{ env.LOVE2D_BRANCH }}
 
-    - name: Setup Lua 5.4.8
-      shell: python
-      run: |
-        import os
-        import urllib.request
-        import tarfile
-        import shutil
-        
-        lua_version = "${{ env.LUA_VERSION }}"
-        
-        # Download Lua 5.4.8
-        print(f"[1/6] Downloading Lua {lua_version}...")
-        url = f"https://www.lua.org/ftp/lua-{lua_version}.tar.gz"
-        tar_path = f"lua-{lua_version}.tar.gz"
-        urllib.request.urlretrieve(url, tar_path)
-        
-        # Extract
-        print("[2/6] Extracting Lua source...")
-        with tarfile.open(tar_path, 'r:gz') as tar:
-            tar.extractall()
-        
-        # Create lua-5.4.8 directory in megasource
-        lua_dir = f"megasource/libs/lua-{lua_version}"
-        print(f"[3/6] Creating {lua_dir}...")
-        os.makedirs(lua_dir, exist_ok=True)
-        
-        # Copy source files
-        print("[4/6] Copying Lua source files...")
-        src_dir = f"lua-{lua_version}"
-        for item in ['src', 'doc', 'etc']:
-            src_path = os.path.join(src_dir, item)
-            dst_path = os.path.join(lua_dir, item)
-            if os.path.exists(src_path):
-                shutil.copytree(src_path, dst_path, dirs_exist_ok=True)
-        
-        # Copy other files
-        for file in ['COPYRIGHT', 'HISTORY', 'INSTALL', 'Makefile', 'README']:
-            src_file = os.path.join(src_dir, file)
-            if os.path.exists(src_file):
-                shutil.copy2(src_file, lua_dir)
-        
-        # Create CMakeLists.txt for Lua 5.4.8
-        print("[5/6] Creating CMakeLists.txt...")
-        cmake_path = os.path.join(lua_dir, 'CMakeLists.txt')
-        with open(cmake_path, 'w', encoding='utf-8') as f:
-            f.write('cmake_minimum_required(VERSION 2.8)\n')
-            f.write('\n')
-            f.write('project(lua51)\n')
-            f.write('\n')
-            f.write('option(LUA_BUILD_SHARED "Build shared library" ON)\n')
-            f.write('option(LUA_BUILD_STATIC "Build static library" OFF)\n')
-            f.write('\n')
-            f.write('set(LUA_SRC\n')
-            f.write('\tsrc/lapi.c\n')
-            f.write('\tsrc/lauxlib.c\n')
-            f.write('\tsrc/lbaselib.c\n')
-            f.write('\tsrc/lcode.c\n')
-            f.write('\tsrc/lcorolib.c\n')
-            f.write('\tsrc/lctype.c\n')
-            f.write('\tsrc/ldblib.c\n')
-            f.write('\tsrc/ldebug.c\n')
-            f.write('\tsrc/ldo.c\n')
-            f.write('\tsrc/ldump.c\n')
-            f.write('\tsrc/lfunc.c\n')
-            f.write('\tsrc/lgc.c\n')
-            f.write('\tsrc/linit.c\n')
-            f.write('\tsrc/liolib.c\n')
-            f.write('\tsrc/llex.c\n')
-            f.write('\tsrc/lmathlib.c\n')
-            f.write('\tsrc/lmem.c\n')
-            f.write('\tsrc/loadlib.c\n')
-            f.write('\tsrc/lobject.c\n')
-            f.write('\tsrc/lopcodes.c\n')
-            f.write('\tsrc/loslib.c\n')
-            f.write('\tsrc/lparser.c\n')
-            f.write('\tsrc/lstate.c\n')
-            f.write('\tsrc/lstring.c\n')
-            f.write('\tsrc/lstrlib.c\n')
-            f.write('\tsrc/ltable.c\n')
-            f.write('\tsrc/ltablib.c\n')
-            f.write('\tsrc/ltm.c\n')
-            f.write('\tsrc/lundump.c\n')
-            f.write('\tsrc/lutf8lib.c\n')
-            f.write('\tsrc/lvm.c\n')
-            f.write('\tsrc/lzio.c\n')
-            f.write(')\n')
-            f.write('\n')
-            f.write('if (LUA_BUILD_STATIC)\n')
-            f.write('\tadd_library(lua51-static STATIC ${LUA_SRC})\n')
-            f.write('\ttarget_include_directories(lua51-static PUBLIC src)\n')
-            f.write('endif()\n')
-            f.write('\n')
-            f.write('if (LUA_BUILD_SHARED)\n')
-            f.write('\tadd_library(lua51 SHARED ${LUA_SRC})\n')
-            f.write('\ttarget_include_directories(lua51 PUBLIC src)\n')
-            f.write('\tif(MSVC)\n')
-            f.write('\t\tset_property(TARGET lua51 PROPERTY COMPILE_DEFINITIONS LUA_BUILD_AS_DLL=1)\n')
-            f.write('\tendif()\n')
-            f.write('\tinstall(TARGETS lua51 RUNTIME DESTINATION . LIBRARY DESTINATION .)\n')
-            f.write('endif()\n')
-        
-        print("[6/6] Patching megasource CMakeLists.txt...")
-        megasource_cmake = 'megasource/CMakeLists.txt'
-        with open(megasource_cmake, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # Change Lua version from 5.1.5 to 5.4.8
-        content = content.replace('set(MEGA_LUA51_VER "5.1.5")', f'set(MEGA_LUA51_VER "{lua_version}")')
-        
-        with open(megasource_cmake, 'w', encoding='utf-8') as f:
-            f.write(content)
-        
-        print("[OK] Lua 5.4.8 setup complete!")
-        print(f"     - Directory: {lua_dir}")
-        print(f"     - CMakeLists.txt created with lua51 target")
-        print(f"     - Will build as lua51.dll (internal: Lua {lua_version})")
-
     - name: Download ANGLE
       uses: robinraju/release-downloader@v1.9
       if: steps.vars.outputs.angle == '1'
@@ -267,13 +147,10 @@ jobs:
         LDFLAGS: /DEBUG:FULL /OPT:REF /OPT:ICF
       run: cmake -Bbuild -Smegasource -T v143 -A ${{ matrix.platform }},version=10.0.26100.0 --install-prefix %CD%\install -DCMAKE_PDB_OUTPUT_DIRECTORY=%CD%\pdb -DLOVE_JIT=OFF ${{ steps.vars.outputs.moredef }}
 
-    - name: Build
-      run: cmake --build build --config Release --target love -j2
-
     - name: Install
       run: cmake --build build --target PACKAGE --config Release -j2
 
-    - name: Copy Lua 5.4 lua51.pdb
+    - name: Copy Lua 5.1 lua51.pdb
       run: |
         copy /Y build\lua51\lua51.pdb pdb\Release\lua51.pdb
         exit /b 0
@@ -287,13 +164,13 @@ jobs:
         python source_index.py ^
         --source %CD%\megasource\libs\love https://raw.githubusercontent.com/love2d/love/${{ needs.version.outputs.commit_hash }} ^
         --source %CD%\megasource https://raw.githubusercontent.com/love2d/megasource/${{ steps.megasource.outputs.commit }} ^
-        --source %CD%\megasource\libs\lua-${{ env.LUA_VERSION }} https://www.lua.org/ftp/ ^
+        --source %CD%\megasource\libs\lua-5.1.5 https://www.lua.org/ftp/ ^
         pdb\Release\*.pdb
 
     - name: Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: love-windows-${{ steps.vars.outputs.arch }}-lua54
+        name: love-windows-${{ steps.vars.outputs.arch }}
         path: |
           build/*.zip
           build/*.exe
@@ -302,13 +179,13 @@ jobs:
     - name: Artifact PDB
       uses: actions/upload-artifact@v4
       with:
-        name: love-windows-${{ steps.vars.outputs.arch }}-lua54-dbg
+        name: love-windows-${{ steps.vars.outputs.arch }}-dbg
         path: pdb/Release/*.pdb
 
   release:
     name: Create Release
     runs-on: ubuntu-latest
-    needs: [version, Windows-Lua54]
+    needs: [version, Windows]
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && !cancelled()
 
     steps:
@@ -321,7 +198,7 @@ jobs:
         mkdir -p release-files
         
         # Copy files from each artifact directory
-        for dir in love-windows-*-lua54; do
+        for dir in love-windows-*; do
           if [ -d "$dir" ] && [[ "$dir" != *"-dbg" ]]; then
             echo "Processing directory: $dir"
             find "$dir" -type f \( -name "*.zip" -o -name "*.exe" \) | while read file; do
@@ -332,7 +209,7 @@ jobs:
                 arch="arm64"  
               fi
               ext="${basename_file##*.}"
-              cp "$file" "release-files/love-${{ needs.version.outputs.version }}-lua54-build${{ needs.version.outputs.padded_build }}-windows-${arch}.${ext}"
+              cp "$file" "release-files/love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-${arch}.${ext}"
             done
           fi
         done
@@ -345,33 +222,30 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         files: release-files/*
-        tag_name: v${{ needs.version.outputs.version }}-lua54-build-${{ needs.version.outputs.padded_build }}
-        name: Love2D ${{ needs.version.outputs.version }} with Lua 5.4.8 Build ${{ needs.version.outputs.padded_build }}
+        tag_name: v${{ needs.version.outputs.version }}-build-${{ needs.version.outputs.padded_build }}
+        name: Love2D ${{ needs.version.outputs.version }} Build ${{ needs.version.outputs.padded_build }}
         body: |
-          Automated build of Love2D ${{ needs.version.outputs.version }} with **Lua 5.4.8** for Windows
+          Automated build of Love2D ${{ needs.version.outputs.version }} for Windows
 
           Built from upstream Love2D repository
           Build number: ${{ needs.version.outputs.padded_build }}
           Commit: ${{ needs.version.outputs.commit_hash }}
           Repository: ${{ env.LOVE2D_REPO }}
           Branch: ${{ env.LOVE2D_BRANCH }}
-          Lua Version: ${{ env.LUA_VERSION }}
 
           **Downloads:**
-          - Windows x64: `love-${{ needs.version.outputs.version }}-lua54-build${{ needs.version.outputs.padded_build }}-windows-x64.zip`
-          - Windows ARM64: `love-${{ needs.version.outputs.version }}-lua54-build${{ needs.version.outputs.padded_build }}-windows-arm64.zip` (if available)
-
-          **Important Notes:**
-          - This build uses **Lua 5.4.8** instead of LuaJIT
-          - DLL name is `lua51.dll` for compatibility (internal version is Lua 5.4.8)
-          - Verify with `print(_VERSION)` in Love2D (should output "Lua 5.4")
-          - No JIT compilation - pure Lua 5.4 interpreter
-          - May have different performance characteristics compared to LuaJIT builds
+          - Windows x64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-x64.zip`
+          - Windows ARM64: `love-${{ needs.version.outputs.version }}-build${{ needs.version.outputs.padded_build }}-windows-arm64.zip` (if available)
 
           This build includes:
           - Love2D Game Framework
-          - Lua 5.4.8 runtime (as lua51.dll)
           - All required runtime libraries
+          - Pure Lua 5.1.5 (without LuaJIT)
+
+          **Note:** 
+          - This build uses pure Lua 5.1.5 instead of LuaJIT
+          - No JIT compilation - may have different performance characteristics
+          - Windows builds include both x64 and ARM64 architectures (ARM64 may not always be available)
         draft: false
         prerelease: false
       env:
