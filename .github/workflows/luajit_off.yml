@@ -120,6 +120,34 @@ jobs:
         cd megasource/libs/love
         git checkout ${{ env.LOVE2D_BRANCH }}
 
+    - name: Patch Love2D for Lua 5.4 compatibility
+      shell: python
+      run: |
+        import os
+        
+        # Patch wrap_Event.cpp - replace lua_cpcall with lua_pcall
+        wrap_event = "megasource/libs/love/src/modules/event/wrap_Event.cpp"
+        print(f"[1/1] Patching {wrap_event} for Lua 5.4...")
+        
+        with open(wrap_event, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # Replace lua_cpcall with lua_pushcfunction + lua_pcall pattern
+        # Original: lua_cpcall(L, w_poll_i, &le)
+        if 'lua_cpcall' in content:
+            # Find and replace the lua_cpcall usage
+            content = content.replace(
+                'lua_cpcall(L, w_poll_i, &le)',
+                'lua_pushcfunction(L, w_poll_i); lua_pushlightuserdata(L, &le); lua_pcall(L, 1, 0, 0)'
+            )
+            
+            with open(wrap_event, 'w', encoding='utf-8') as f:
+                f.write(content)
+            
+            print("[OK] Patched lua_cpcall -> lua_pcall")
+        else:
+            print("[SKIP] No lua_cpcall found (already compatible)")
+
     - name: Replace Lua 5.1.5 with Lua 5.4.8
       shell: python
       run: |
