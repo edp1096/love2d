@@ -152,10 +152,11 @@ jobs:
             count = content.count('lua_cpcall')
             print(f"[DEBUG] Found {count} occurrence(s) of lua_cpcall")
             
-            # Use regex for more flexible matching (handles whitespace variations)
-            # Pattern: lua_cpcall(L, w_poll_i, &le) with optional whitespace
-            pattern = r'lua_cpcall\s*\(\s*L\s*,\s*w_poll_i\s*,\s*&le\s*\)'
-            replacement = 'lua_pushcfunction(L, w_poll_i); lua_pushlightuserdata(L, &le); lua_pcall(L, 1, 0, 0)'
+            # Use regex to replace all lua_cpcall occurrences
+            # Pattern: lua_cpcall(L, function_name, argument)
+            # Capture groups: (function_name) and (argument)
+            pattern = r'lua_cpcall\s*\(\s*L\s*,\s*(\w+)\s*,\s*([^)]+)\s*\)'
+            replacement = r'lua_pushcfunction(L, \1); lua_pushlightuserdata(L, \2); lua_pcall(L, 1, 0, 0)'
             
             # Apply patch
             new_content, num_replacements = re.subn(pattern, replacement, content)
